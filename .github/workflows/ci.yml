@@ -40,11 +40,15 @@ jobs:
           curl -fLO https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
           sudo dpkg -i cuda-keyring_1.1-1_all.deb
           sudo apt-get update
+          # The ggml-quant GEMM path links CUDA::cublas; FindCUDAToolkit only
+          # creates that imported target when libcublas is installed, so a
+          # missing libcublas-dev fails configure with "target was not found".
           sudo apt-get install -y --no-install-recommends \
             cuda-nvcc-${{ env.CUDA_APT_VERSION }} \
             cuda-cudart-dev-${{ env.CUDA_APT_VERSION }} \
             cuda-nvtx-${{ env.CUDA_APT_VERSION }} \
-            cuda-driver-dev-${{ env.CUDA_APT_VERSION }}
+            cuda-driver-dev-${{ env.CUDA_APT_VERSION }} \
+            libcublas-dev-${{ env.CUDA_APT_VERSION }}
           echo "$CUDA_HOME/bin" >> "$GITHUB_PATH"
           "$CUDA_HOME/bin/nvcc" --version
 
@@ -69,6 +73,7 @@ jobs:
           restore-keys: ccache-ci-sm70-
 
       - name: Configure (sm_70, apps + tests)
+        id: configure
         run: |
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
@@ -83,7 +88,49 @@ jobs:
             -DFETCHCONTENT_SOURCE_DIR_CUTLASS="$PWD/cutlass-${{ env.CUTLASS_VERSION }}"
 
       - name: Build
+        id: build
         run: |
           export CCACHE_DIR="$PWD/.ccache"
           cmake --build build -j"$(nproc)"
           ccache --show-stats || true
+
+      # GitHub gates Actions logs behind sign-in. On a failed configure or
+      # build, replay the failing step and publish the error tail to the job
+      # summary (publicly viewable without login) plus error annotations.
+      # Keep the re-run flags in sync with the Configure step above.
+      - name: Dump failure diagnostics to the job summary
+        if: "failure() && (steps.configure.outcome == 'failure' || steps.build.outcome == 'failure')"
+        continue-on-error: true
+        run: |
+          set +e
+          diag=$(mktemp)
+          if [ "${{ steps.configure.outcome }}" = "failure" ]; then
+            {
+              echo "### cmake configure re-run (reproduces the failure)"
+              echo '```'
+              cmake -B build -G Ninja \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_CUDA_ARCHITECTURES=70 \
+                -DCMAKE_CUDA_COMPILER="$CUDA_HOME/bin/nvcc" \
+                -DNINFER_BUILD_APPS=ON \
+                -DBUILD_TESTING=ON \
+                -DNINFER_BUILD_BENCHMARKS=OFF \
+                -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+                -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+                -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache \
+                -DFETCHCONTENT_SOURCE_DIR_CUTLASS="$PWD/cutlass-${{ env.CUTLASS_VERSION }}" 2>&1 | tail -n 80
+              echo '```'
+            } >> "$diag"
+          fi
+          if [ "${{ steps.build.outcome }}" = "failure" ]; then
+            {
+              echo "### build re-run (last 200 lines)"
+              echo '```'
+              cmake --build build 2>&1 | tail -n 200
+              echo '```'
+            } >> "$diag"
+          fi
+          cat "$diag" >> "$GITHUB_STEP_SUMMARY"
+          grep -E "CMake Error|fatal error:|FAILED:" "$diag" | tail -n 5 | cut -c1-250 \
+            | while IFS= read -r line; do echo "::error::$line"; done
+          true
