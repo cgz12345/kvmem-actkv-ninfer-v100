@@ -62,12 +62,31 @@ ninfer_add_test(ninfer_media_decode_test
   SOURCES test_media_decode.cpp
   LIBRARIES ninfer_media_decode)
 ninfer_add_test(ninfer_device_test       SOURCES test_device.cpp)
+set_tests_properties(ninfer_device_test PROPERTIES
+  SKIP_RETURN_CODE 77
+  ENVIRONMENT_MODIFICATION "NINFER_CUDA_SYNC=unset:")
+set(sync_modes spin blocking yield auto)
+set(sync_flags 1 4 2 0)
+foreach(mode flags IN ZIP_LISTS sync_modes sync_flags)
+  add_test(NAME ninfer_device_sync_${mode}_test COMMAND ninfer_device_test ${flags})
+  set_tests_properties(ninfer_device_sync_${mode}_test PROPERTIES
+    ENVIRONMENT "NINFER_CUDA_SYNC=${mode}" SKIP_RETURN_CODE 77)
+endforeach()
+foreach(mode IN ITEMS invalid empty)
+  add_test(NAME ninfer_device_sync_${mode}_test COMMAND ninfer_device_test --invalid-sync)
+endforeach()
+set_tests_properties(ninfer_device_sync_invalid_test PROPERTIES
+  ENVIRONMENT "NINFER_CUDA_SYNC=invalid")
+set_tests_properties(ninfer_device_sync_empty_test PROPERTIES
+  ENVIRONMENT "NINFER_CUDA_SYNC=")
 ninfer_add_test(ninfer_decode_graph_test SOURCES test_decode_graph.cpp)
+ninfer_add_op_test(ninfer_token_sums_test SOURCES ops/test_token_sums.cpp LIBRARIES ninfer_ops)
 ninfer_add_test(ninfer_tensor_test       SOURCES test_tensor.cpp)
 ninfer_add_test(ninfer_arena_test        SOURCES test_arena.cpp)
 ninfer_add_test(ninfer_admission_policy_test SOURCES test_admission_policy.cpp)
 ninfer_add_test(ninfer_context_cost_test SOURCES test_context_cost.cpp)
 ninfer_add_test(ninfer_resource_manager_test SOURCES test_resource_manager.cpp)
+ninfer_add_test(ninfer_materialization_budget_test SOURCES test_materialization_budget.cpp)
 ninfer_add_test(ninfer_kv_capacity_test SOURCES test_kv_capacity.cpp)
 ninfer_add_test(ninfer_sampling_defaults_test
   SOURCES test_sampling_defaults.cpp

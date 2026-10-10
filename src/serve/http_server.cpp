@@ -442,6 +442,60 @@ void HttpServer::register_routes() {
         res.set_content(nlohmann::json{{"status", available ? "ok" : "unavailable"}}.dump(),
                         "application/json");
     });
+    server_.Get("/slots", [this](const httplib::Request&, httplib::Response& res) {
+        nlohmann::json slots = nlohmann::json::array();
+        for (const auto& state : service_->execution_slot_states()) {
+            slots.push_back({{"id", state.id}, {"is_processing", state.processing},
+                             {"n_ctx", options_.max_context},
+                             {"n_prompt_tokens", state.prompt_tokens},
+                             {"n_prompt_tokens_cache", state.cached_tokens},
+                             {"n_decoded", state.generated_tokens},
+                             {"speculative", options_.speculative.backend != SpeculativeBackend::None}});
+        }
+        res.set_header("Cache-Control", "no-store");
+        res.set_content(slots.dump(), "application/json");
+    });
+    // Published worker snapshots: monitoring never waits on CUDA or the execution lock.
+    server_.Get("/stats", [this](const httplib::Request&, httplib::Response& res) {
+        const auto stats = service_->runtime_stats();
+        const nlohmann::json snapshot = {
+            {"schema", "ninfer.runtime.v1"},
+            {"available", service_->is_available()},
+            {"running_requests", stats.running_requests},
+            {"waiting_requests", stats.waiting_requests},
+            {"prefilling_requests", stats.prefilling_requests},
+            {"decode_ready_requests", stats.decode_ready_requests},
+            {"computed_prefill_tokens", stats.computed_prefill_tokens},
+            {"committed_decode_tokens", stats.committed_decode_tokens},
+            {"reused_prompt_tokens", stats.reused_prompt_tokens},
+            {"decode_rounds", stats.decode_rounds},
+            {"native_host_kv_occupied_bytes", stats.host_kv_occupied_bytes},
+            {"native_main_kv_d2h_bytes", stats.main_kv_d2h_bytes},
+            {"native_main_kv_h2d_bytes", stats.main_kv_h2d_bytes}
+        };
+        res.set_content(snapshot.dump(), "application/json");
+    });
+    server_.Get("/metrics", [this](const httplib::Request&, httplib::Response& res) {
+        const auto stats = service_->runtime_stats();
+        std::string text;
+        const auto metric = [&text](const char* name, const char* type, auto value) {
+            text += std::string("# TYPE ninfer_") + name + " " + type + "\n";
+            text += std::string("ninfer_") + name + " " + std::to_string(value) + "\n";
+        };
+        metric("available", "gauge", service_->is_available() ? 1 : 0);
+        metric("running_requests", "gauge", stats.running_requests);
+        metric("waiting_requests", "gauge", stats.waiting_requests);
+        metric("prefilling_requests", "gauge", stats.prefilling_requests);
+        metric("decode_ready_requests", "gauge", stats.decode_ready_requests);
+        metric("computed_prefill_tokens_total", "counter", stats.computed_prefill_tokens);
+        metric("committed_decode_tokens_total", "counter", stats.committed_decode_tokens);
+        metric("reused_prompt_tokens_total", "counter", stats.reused_prompt_tokens);
+        metric("decode_rounds_total", "counter", stats.decode_rounds);
+        metric("native_host_kv_occupied_bytes", "gauge", stats.host_kv_occupied_bytes);
+        metric("native_main_kv_d2h_bytes_total", "counter", stats.main_kv_d2h_bytes);
+        metric("native_main_kv_h2d_bytes_total", "counter", stats.main_kv_h2d_bytes);
+        res.set_content(text, "text/plain; version=0.0.4; charset=utf-8");
+    });
     server_.Get("/props", [this](const httplib::Request& req, httplib::Response& res) {
         handle_props(req, res);
     });
@@ -573,9 +627,9 @@ void HttpServer::handle_props(const httplib::Request&, httplib::Response& res) c
         {"is_sleeping", false},
         // Endpoints this server actually implements; the WebUI hides the panels that would
         // otherwise poll a missing one.
-        {"endpoint_slots", false},
+        {"endpoint_slots", true},
         {"endpoint_props", true},
-        {"endpoint_metrics", false},
+        {"endpoint_metrics", true},
         {"cors_proxy_enabled", false},
     };
     res.set_content(props.dump(), "application/json");

@@ -108,6 +108,10 @@ public:
 
     [[nodiscard]] ninfer::RuntimeStats runtime_stats() const { return engine_->runtime_stats(); }
 
+    [[nodiscard]] std::vector<ninfer::ExecutionSlotState> execution_slot_states() const {
+        return engine_->execution_slot_states();
+    }
+
     [[nodiscard]] bool is_available() const { return engine_->is_available(); }
 
     [[nodiscard]] ninfer::MediaCacheSummary media_cache_summary() const {

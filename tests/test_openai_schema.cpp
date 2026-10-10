@@ -435,9 +435,9 @@ int test_messages_and_media() {
                           ninfer::ImageDetail::High,
                       "explicit image detail 'high' keeps the server's Vision preprocessing");
     body["messages"][0]["content"][0]["image_url"]["detail"] = "low";
-    failures += check(api_error([&] { (void)parse(body); }).code ==
-                          "image_detail_low_not_supported",
-                      "image detail 'low' names a preprocessing profile this build does not port");
+    failures += check(parse(body).generation.messages[0].content[0].image_detail ==
+                          ninfer::ImageDetail::Low,
+                      "image detail low is preserved for bounded preprocessing");
     body["messages"][0]["content"][0]["image_url"]["detail"] = "medium";
     failures += check(api_error([&] { (void)parse(body); }).code == "image_detail_not_supported",
                       "unknown image detail value rejected");

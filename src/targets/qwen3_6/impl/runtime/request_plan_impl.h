@@ -96,7 +96,8 @@ std::uint64_t projected_service_work(const runtime::RequestPlanSummary& summary,
                                      std::uint32_t reuse_base, std::uint32_t prefill_chunk,
                                      std::size_t prefill_splits,
                                      std::span<const CaptureGroup> captures,
-                                     std::span<const std::uint32_t> rewrite_frontiers) noexcept {
+                                     std::span<const std::uint32_t> rewrite_frontiers,
+                                     bool kvmem_replay = false) noexcept {
     std::uint64_t prefill_units = 0;
     std::uint32_t segment_begin = reuse_base;
     std::size_t capture_index   = 0;
@@ -125,6 +126,16 @@ std::uint64_t projected_service_work(const runtime::RequestPlanSummary& summary,
             return capture.frontier == reuse_base;
         }));
     prefill_units += prefill_splits;
+    if (kvmem_replay) {
+        // KVMem may probe the query, restore its boundary, then replay it. A
+        // history restore can also rebuild hidden prompt work. These steps
+        // consume scheduler units even though their tokens are deliberately
+        // omitted from externally reported prompt progress. Reserve a bounded
+        // additional full pass, including its possible split/capture steps.
+        prefill_units += 1ULL +
+            (static_cast<std::uint64_t>(summary.prompt_tokens) + prefill_chunk - 1ULL) /
+                prefill_chunk + prefill_splits + captures.size() + rewrite_frontiers.size();
+    }
     const std::uint64_t decode_units =
         summary.effective_output_tokens == 0 ? 0ULL : summary.effective_output_tokens - 1ULL;
     return prefill_units + decode_units;
@@ -456,7 +467,8 @@ RequestBasePlan ProgramImplCore::plan_request(const PreparedPromptData& prompt,
         base->vision_control_plan ? base->vision_control_plan->items.size() : 0ULL;
     base->summary.service_work_quanta =
         projected_service_work(base->summary, 0, prefill_chunk, cold_prefill_splits,
-                               base->capture_groups, prompt.identity.rewrite_execution_frontiers);
+                               base->capture_groups, prompt.identity.rewrite_execution_frontiers,
+                               kvmem_window_tokens != 0);
     base->root_rebuild_work =
         rebuild_work_at_frontier(prompt, base->summary.prompt_tokens, prefill_chunk,
                                  base->capture_groups, prompt.identity.rewrite_execution_frontiers);
@@ -771,7 +783,8 @@ std::optional<AdmissionCandidate> ProgramImplCore::inspect_lane(
     const std::size_t prefill_splits = plan->vision ? plan->vision->uses.size() : 0ULL;
     plan->summary.service_work_quanta =
         projected_service_work(plan->summary, plan->reuse_base, prefill_chunk, prefill_splits,
-                               plan->capture_groups, prompt.identity.rewrite_execution_frontiers);
+                               plan->capture_groups, prompt.identity.rewrite_execution_frontiers,
+                               kvmem_window_tokens != 0);
     std::uint64_t remaining_vision_items   = 0;
     std::uint64_t remaining_vision_patches = 0;
     if (plan->vision) {
@@ -1309,7 +1322,8 @@ void ProgramImplCore::select_shared_captures(AdmissionCandidate& candidate,
     const std::size_t prefill_splits = plan.vision ? plan.vision->uses.size() : 0ULL;
     plan.summary.service_work_quanta =
         projected_service_work(plan.summary, plan.reuse_base, prefill_chunk, prefill_splits,
-                               plan.capture_groups, prompt.identity.rewrite_execution_frontiers);
+                               plan.capture_groups, prompt.identity.rewrite_execution_frontiers,
+                               kvmem_window_tokens != 0);
     std::uint64_t vision_items   = 0;
     std::uint64_t vision_patches = 0;
     if (plan.vision) {

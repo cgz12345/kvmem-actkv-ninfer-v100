@@ -1,3 +1,6 @@
 # Keep shell scripts LF-only so they survive Windows checkouts (Docker COPY).
 docker/entrypoint.sh text eol=lf
 *.sh text eol=lf
+
+# Frontend templates are fingerprinted byte-for-byte.
+tests/fixtures/frontend/*.jinja text eol=lf

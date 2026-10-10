@@ -15,8 +15,7 @@ namespace ninfer::serve {
 
 // Settles every parsed image detail: a value outside auto, low and high is refused with
 // image_detail_not_supported (`field`, under request parameter `param`) unless the server reads such
-// values as auto (--lenient-image-detail), and `low` is refused with image_detail_low_not_supported
-// because the bounded Vision preprocessing profile it selects is not ported yet.
+// values as auto (--lenient-image-detail). Low selects the bounded Vision profile.
 void settle_image_details(std::vector<ChatTurn>& turns, const RequestLimits& limits,
                           const std::string& param, const std::string& field);
 

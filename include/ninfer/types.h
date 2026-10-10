@@ -317,9 +317,7 @@ enum class ImageResizePolicy : std::uint8_t {
 
 // How finely an image is seen (OpenAI's image detail). Auto and High use the server's Vision bound.
 // Low bounds the image at the area of a 512 x 512 picture (256 merged Vision tokens, or the
-// server's own bound when that is smaller); that bounded profile and its separate cache identity
-// are not ported yet, so the serve layer accepts Low from the wire but refuses it with
-// image_detail_low_not_supported until the preprocessing exists.
+// server's own bound when that is smaller). Prepared low-detail media has a separate cache identity.
 enum class ImageDetail : std::uint8_t {
     Auto,
     Low,
@@ -332,6 +330,7 @@ struct OwnedMedia {
     std::string media_type;
     std::string source_name;
     ImageResizePolicy image_resize_policy = ImageResizePolicy::Downsize;
+    ImageDetail image_detail = ImageDetail::Auto;
 };
 
 struct ToolCall {
@@ -755,7 +754,8 @@ enum class MaterializationStopReason : std::uint8_t {
     TargetBudget,
     ExpansionCapacity,
     TimeBudget,
-    ValueOfNextExpansion,
+    InsufficientExpectedGain,
+    WorkBudget,
 };
 
 [[nodiscard]] inline constexpr const char*
@@ -771,10 +771,40 @@ materialization_stop_reason_name(MaterializationStopReason reason) noexcept {
         return "expansion_capacity";
     case MaterializationStopReason::TimeBudget:
         return "time_budget";
-    case MaterializationStopReason::ValueOfNextExpansion:
-        return "value_of_next_expansion";
+    case MaterializationStopReason::InsufficientExpectedGain:
+        return "insufficient_expected_gain";
+    case MaterializationStopReason::WorkBudget:
+        return "work_budget";
     }
     return "no_pressure";
+}
+
+enum class MaterializationSearchPhase : std::uint8_t {
+    None,
+    Setup,
+    Construction,
+    Assessment,
+    Expansion,
+    Refinement,
+};
+
+[[nodiscard]] inline constexpr const char*
+materialization_search_phase_name(MaterializationSearchPhase phase) noexcept {
+    switch (phase) {
+    case MaterializationSearchPhase::None:
+        return "none";
+    case MaterializationSearchPhase::Setup:
+        return "setup";
+    case MaterializationSearchPhase::Construction:
+        return "construction";
+    case MaterializationSearchPhase::Assessment:
+        return "assessment";
+    case MaterializationSearchPhase::Expansion:
+        return "expansion";
+    case MaterializationSearchPhase::Refinement:
+        return "refinement";
+    }
+    return "none";
 }
 
 struct MaterializationDiagnostics {
@@ -789,6 +819,17 @@ struct MaterializationDiagnostics {
     bool budget_exhausted                    = false;
     std::uint32_t selected_degradation_units = 0;
     bool selected_maximal_fallback           = false;
+
+    std::uint64_t initial_predicted_total_ns = 0;
+    std::optional<std::uint64_t> first_improvement_ns;
+    std::uint32_t incumbent_improvements         = 0;
+    std::uint64_t search_work                    = 0;
+    std::uint64_t search_granted_ns              = 0;
+    std::uint32_t search_renewals                = 0;
+    bool search_discovery_used                   = false;
+    std::uint64_t search_overshoot_ns            = 0;
+    MaterializationSearchPhase search_stop_phase = MaterializationSearchPhase::None;
+    bool search_boundary_limited                 = false;
 
     [[nodiscard]] friend constexpr bool
     operator==(const MaterializationDiagnostics&,
@@ -1044,6 +1085,7 @@ struct LoadSummary {
     std::string target;
     std::string model_id;
     std::string weights_id;
+    std::string cuda_sync_mode;
     double load_seconds                = 0.0;
     double upload_seconds              = 0.0;
     std::uint64_t artifact_bytes_read  = 0;

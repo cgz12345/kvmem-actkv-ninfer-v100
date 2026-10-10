@@ -56,10 +56,11 @@ struct PrefillContext {
     std::uint32_t text_kv_base;
     const ops::SamplingConfig* sampling;
     Tensor* rewrite_checkpoint_hidden;
-    std::int32_t state_source_slot                          = 0;
-    std::int32_t state_destination_slot                     = 0;
-    std::uint32_t mtp_proposal_extent                       = 0;
-    const qwen3_6::DFlashDecodeIngress* dflash_host_ingress = nullptr;
+    std::int32_t state_source_slot                             = 0;
+    std::int32_t state_destination_slot                        = 0;
+    std::uint32_t mtp_proposal_extent                          = 0;
+    std::int32_t dflash_kv_table_row                           = 0;
+    qwen3_6::DFlashPrefillIngress* dflash_prefill_host_ingress = nullptr;
     // KVMem compact-view shift: cache positions are logical positions minus this value;
     // RoPE positions stay logical (rope_delta absorbs the shift).
     std::uint32_t cache_position_shift = 0;

@@ -750,10 +750,9 @@ int test_explicit_rejections() {
                               .content[0]
                               .image_detail == ninfer::ImageDetail::High,
                       "Responses input_image detail 'high' keeps the server's preprocessing");
-    failures += check(api_code([&] {
-                          (void)parse_openai_responses_create_request(image_input("low"), limits());
-                      }) == "image_detail_low_not_supported",
-                      "Responses input_image detail 'low' is refused explicitly");
+    failures += check(parse_openai_responses_create_request(image_input("low"), limits())
+                              .prompt.input_turns[0].content[0].image_detail == ninfer::ImageDetail::Low,
+                      "Responses preserves low-detail preprocessing");
     failures += check(api_code([&] {
                           (void)parse_openai_responses_create_request(image_input("medium"),
                                                                       limits());

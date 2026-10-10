@@ -44,7 +44,7 @@ private:
 
 // Server-side context needed while parsing/validating a request.
 struct RequestLimits {
-    int default_max_tokens = 8192;
+    int default_max_tokens = 65536;
     int max_context        = 8192; // --max-context, the upper bound of a "no limit" budget
     // --lenient-image-detail: an image detail outside auto, low and high is read as auto instead
     // of failing with image_detail_not_supported.

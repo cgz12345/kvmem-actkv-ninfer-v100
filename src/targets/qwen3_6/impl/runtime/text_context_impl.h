@@ -1190,6 +1190,15 @@ TextContext::prefill_impl(std::span<const int> ids, const TextPrefill* text_pref
 
             Tensor positions = roots.positions;
             ops::fill_i32_positions(positions, base_i + t0 - static_cast<int>(cache_position_shift_), s);
+            if (memory_statistics_ != nullptr) {
+                // Statistics ranges and host page IDs are LOGICAL, not compact
+                // cache positions. Publish the actual origin of this chunk;
+                // leaving it at startup zero silently zeros late-query sums.
+                for (const auto& shard : memory_statistics_->ranks) {
+                    Tensor origin = shard.prefill_origin;
+                    ops::set_i32_scalar(origin, base_i + t0, s);
+                }
+            }
 
             Tensor rope_positions = positions;
             std::vector<std::int32_t> rope_positions_host;

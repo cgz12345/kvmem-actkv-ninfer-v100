@@ -327,7 +327,7 @@ ninfer::PromptInput image_input() {
     return input;
 }
 
-bool near(float actual, float expected) { return std::abs(actual - expected) < 1.0e-6F; }
+bool approximately_equal(float actual, float expected) { return std::abs(actual - expected) < 1.0e-6F; }
 
 constexpr std::array<std::uint8_t, 32> kGradientDigest{
     0x1e, 0x8c, 0xd9, 0x22, 0x40, 0xfa, 0x10, 0x62, 0x7b, 0x60, 0x86, 0x8e, 0xe9, 0x66, 0x41, 0xa2,
@@ -1089,9 +1089,15 @@ int test_official_resource_guards() {
     nlohmann::json mismatched_config   = nlohmann::json::parse(mismatched.tokenizer_config_json);
     mismatched_config["chat_template"] = reasoning_effort_template_source();
     mismatched.tokenizer_config_json   = mismatched_config.dump();
-    failures +=
-        check(throws_invalid_argument([&] { (void)FrontendFactory::create_component(mismatched); }),
-              "different standalone and tokenizer-config chat templates were accepted");
+    const Frontend standalone = FrontendFactory::create_component(mismatched);
+    failures += check(!standalone.prompt_capabilities().reasoning_effort.low,
+                      "tokenizer-config metadata overrode the standalone chat template");
+    auto licensed = resources();
+    licensed.chat_template_jinja = "{# SPDX-License-Identifier: Apache-2.0 #}\n" +
+                                   licensed.chat_template_jinja;
+    failures += check(!FrontendFactory::create_component(licensed).prompt_capabilities()
+                           .reasoning_effort.low,
+                      "license-only template header changed frontend semantics");
 
     FrontendResources unknown = resources("{{ messages }}");
     failures +=
@@ -2039,6 +2045,33 @@ int test_invalid_media_classification() {
     return failures;
 }
 
+int test_low_detail_media_profile() {
+    const Frontend frontend = FrontendFactory::create_component(resources());
+    auto input = [](ninfer::ImageDetail detail) {
+        auto result = image_input();
+        result.messages[0].parts[0].media.bytes = block_ppm(1024, 1024, 128);
+        result.messages[0].parts[0].media.image_detail = detail;
+        return result;
+    };
+    auto full = frontend.prepare(input(ninfer::ImageDetail::High));
+    auto low = frontend.prepare(input(ninfer::ImageDetail::Low));
+    auto low_again = frontend.prepare(input(ninfer::ImageDetail::Low));
+    const auto& f = FrontendFactory::inspect(full);
+    const auto& l = FrontendFactory::inspect(low);
+    const auto& a = FrontendFactory::inspect(low_again);
+    int failures = check(l.prepare.vision_tokens <= 256 &&
+                         l.prepare.vision_tokens < f.prepare.vision_tokens,
+                         "low detail must bound image tokens without changing high detail");
+    failures += check(l.prepare.media_cache_misses == 1 && a.prepare.media_cache_hits == 1 &&
+                      f.media_payloads.front() != l.media_payloads.front() &&
+                      l.media_payloads.front() == a.media_payloads.front(),
+                      "same image bytes must have independent full and low cache identities");
+    failures += check(frontend.count_tokens(input(ninfer::ImageDetail::Low)) ==
+                      low.summary().prompt_tokens,
+                      "low-detail token counting must match preparation");
+    return failures;
+}
+
 int test_media_cache_reuses_immutable_payload() {
     const Frontend frontend = FrontendFactory::create_component(resources());
     auto first              = frontend.prepare(image_input());
@@ -2076,7 +2109,7 @@ int test_media_payload_outlives_frontend_cache() {
     const auto& data = FrontendFactory::inspect(survivor);
     return check(data.media_payloads.size() == 1 && data.media_payloads.front() &&
                      data.media_payloads.front()->patch_elements == 16 * 1536 &&
-                     near(bf16_value(data.media_payloads.front()->span().front()), -1.0F),
+                     approximately_equal(bf16_value(data.media_payloads.front()->span().front()), -1.0F),
                  "request-pinned media payload did not survive its Frontend cache owner");
 }
 
@@ -2221,48 +2254,65 @@ int test_media_preparation_cancellation() {
 
 } // namespace
 
-int main() {
+int run_tests() {
     const FrontendResources owned = resources();
     const Frontend frontend       = FrontendFactory::create_component(owned);
     int failures                  = 0;
-    failures += test_tokenizer_config_merge();
-    failures += test_bpe_merge_order();
-    failures += test_boundary_aware_tokenization();
-    failures += test_literal_added_token_provenance();
-    failures += test_repeated_special_tokens_scan_linearly();
-    failures += test_bounded_tokenizer_prefix();
-    failures += test_context_capacity_guard();
-    failures += test_official_chat_template();
-    failures += test_ordered_instruction_turns();
-    failures += test_assistant_continuation();
-    failures += test_reasoning_effort_chat_template();
-    failures += test_rewrite_checkpoint_trace();
-    failures += test_adjacent_tool_message_boundary();
-    failures += test_official_resource_guards();
-    failures += test_invalid_public_part_enums(frontend);
-    failures += test_text_and_image_prepare(frontend);
-    failures += test_literal_control_tokens_with_media();
-    failures += test_image_resize_rejection_policy();
-    failures += test_explicit_leading_instruction_cache_boundary();
-    failures += test_media_admission_uses_aggregate_resources(frontend);
-    failures += test_multimodal_prompt_over_removed_32k_cap(frontend);
-    failures += test_attention_pairs_are_diagnostic(frontend);
-    failures += test_video_prepare(frontend);
-    failures += test_cross_round_stop(frontend);
-    failures += test_same_token_stop_priority(frontend);
-    failures += test_terminal_flush(frontend);
-    failures += test_structured_tool_output();
-    failures += test_reasoning_split(frontend);
-    failures += test_thinking_budget_control(frontend);
-    failures += test_utf8_and_hidden_eos(frontend);
-    failures += test_media_cache_reuses_immutable_payload();
-    failures += test_media_payload_outlives_frontend_cache();
-    failures += test_media_live_bytes_follow_last_payload_reference();
-    failures += test_media_cache_singleflight();
-    failures += test_media_cache_runs_independent_misses_in_parallel();
-    failures += test_many_images_prepare_in_one_parallel_batch();
-    failures += test_media_preparation_cancellation();
-    failures += test_invalid_media_classification();
-    failures += test_disabled_vision();
+    const auto run = [&failures](const char* name, const auto& test) {
+        std::cerr << "RUN " << name << std::endl;
+        try { failures += test(); }
+        catch (const std::exception& error) {
+            std::cerr << name << ": " << error.what() << std::endl;
+            ++failures;
+        }
+    };
+    run("test_tokenizer_config_merge", [&] { return test_tokenizer_config_merge(); });
+    run("test_bpe_merge_order", [&] { return test_bpe_merge_order(); });
+    run("test_boundary_aware_tokenization", [&] { return test_boundary_aware_tokenization(); });
+    run("test_literal_added_token_provenance", [&] { return test_literal_added_token_provenance(); });
+    run("test_repeated_special_tokens_scan_linearly", [&] { return test_repeated_special_tokens_scan_linearly(); });
+    run("test_bounded_tokenizer_prefix", [&] { return test_bounded_tokenizer_prefix(); });
+    run("test_context_capacity_guard", [&] { return test_context_capacity_guard(); });
+    run("test_official_chat_template", [&] { return test_official_chat_template(); });
+    run("test_ordered_instruction_turns", [&] { return test_ordered_instruction_turns(); });
+    run("test_assistant_continuation", [&] { return test_assistant_continuation(); });
+    run("test_reasoning_effort_chat_template", [&] { return test_reasoning_effort_chat_template(); });
+    run("test_rewrite_checkpoint_trace", [&] { return test_rewrite_checkpoint_trace(); });
+    run("test_adjacent_tool_message_boundary", [&] { return test_adjacent_tool_message_boundary(); });
+    run("test_official_resource_guards", [&] { return test_official_resource_guards(); });
+    run("test_invalid_public_part_enums", [&] { return test_invalid_public_part_enums(frontend); });
+    run("test_text_and_image_prepare", [&] { return test_text_and_image_prepare(frontend); });
+    run("test_literal_control_tokens_with_media", [&] { return test_literal_control_tokens_with_media(); });
+    run("test_image_resize_rejection_policy", [&] { return test_image_resize_rejection_policy(); });
+    run("test_explicit_leading_instruction_cache_boundary", [&] { return test_explicit_leading_instruction_cache_boundary(); });
+    run("test_media_admission_uses_aggregate_resources", [&] { return test_media_admission_uses_aggregate_resources(frontend); });
+    run("test_multimodal_prompt_over_removed_32k_cap", [&] { return test_multimodal_prompt_over_removed_32k_cap(frontend); });
+    run("test_attention_pairs_are_diagnostic", [&] { return test_attention_pairs_are_diagnostic(frontend); });
+    run("test_video_prepare", [&] { return test_video_prepare(frontend); });
+    run("test_cross_round_stop", [&] { return test_cross_round_stop(frontend); });
+    run("test_same_token_stop_priority", [&] { return test_same_token_stop_priority(frontend); });
+    run("test_terminal_flush", [&] { return test_terminal_flush(frontend); });
+    run("test_structured_tool_output", [&] { return test_structured_tool_output(); });
+    run("test_reasoning_split", [&] { return test_reasoning_split(frontend); });
+    run("test_thinking_budget_control", [&] { return test_thinking_budget_control(frontend); });
+    run("test_utf8_and_hidden_eos", [&] { return test_utf8_and_hidden_eos(frontend); });
+    run("test_low_detail_media_profile", [&] { return test_low_detail_media_profile(); });
+    run("test_media_cache_reuses_immutable_payload", [&] { return test_media_cache_reuses_immutable_payload(); });
+    run("test_media_payload_outlives_frontend_cache", [&] { return test_media_payload_outlives_frontend_cache(); });
+    run("test_media_live_bytes_follow_last_payload_reference", [&] { return test_media_live_bytes_follow_last_payload_reference(); });
+    run("test_media_cache_singleflight", [&] { return test_media_cache_singleflight(); });
+    run("test_media_cache_runs_independent_misses_in_parallel", [&] { return test_media_cache_runs_independent_misses_in_parallel(); });
+    run("test_many_images_prepare_in_one_parallel_batch", [&] { return test_many_images_prepare_in_one_parallel_batch(); });
+    run("test_media_preparation_cancellation", [&] { return test_media_preparation_cancellation(); });
+    run("test_invalid_media_classification", [&] { return test_invalid_media_classification(); });
+    run("test_disabled_vision", [&] { return test_disabled_vision(); });
     return failures == 0 ? 0 : 1;
+}
+
+int main() {
+    try { return run_tests(); }
+    catch (const std::exception& error) {
+        std::cerr << "frontend setup failed: " << error.what() << std::endl;
+        return 1;
+    }
 }

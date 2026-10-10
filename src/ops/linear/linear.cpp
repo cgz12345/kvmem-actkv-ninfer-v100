@@ -1,4 +1,5 @@
 #include "ninfer/ops/linear.h"
+#include "core/device.h"
 
 #include "ops/linear/bf16/bf16_config.h"
 #include "ops/linear/bf16/bf16_dispatch.h"
@@ -183,8 +184,8 @@ namespace {
 
 // A process-wide device scratch for GGUF products issued through the workspace-less linear()
 // convenience: those call sites (lm head, MTP projections) have no caller arena, and the GGUF
-// bridges need transient activation storage. Stream-ordered cudaMallocAsync keeps the allocation
-// legal inside CUDA graph capture; the block is intentionally never freed (one scratch per
+// bridges need transient activation storage. Scratch grows during eager warmup
+// before CUDA graph capture; the block is intentionally never freed (one scratch per
 // process, grown only when a wider call appears).
 class GgufScratch {
 public:
@@ -197,6 +198,12 @@ public:
 
     void require(std::size_t bytes, cudaStream_t stream) {
         if (bytes <= capacity_) { return; }
+        cudaStreamCaptureStatus status{};
+        CUDA_CHECK(cudaStreamIsCapturing(stream, &status));
+        if (status != cudaStreamCaptureStatusNone) {
+            throw std::logic_error(
+                "linear: GGUF scratch must be warmed at the maximum width before graph capture");
+        }
         void* raw = nullptr;
         if (cudaMallocAsync(&raw, bytes, stream) != cudaSuccess) {
             throw std::runtime_error("linear: GGUF scratch allocation failed");

@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace ninfer {
 namespace {
@@ -77,7 +78,24 @@ void DecodeGraphDefinition::capture(cudaStream_t stream, const std::function<voi
         CUDA_CHECK(err);
     }
 
+    // Decode graphs borrow Program-owned storage and must be replayable.
+    // A captured cudaMallocAsync without a paired free succeeds once, then
+    // subsequent launches fail with cudaErrorInvalidValue while it remains live.
+    DecodeGraphDefinition captured;
+    captured.graph_ = graph; // Own the definition on every validation/exception path.
+    std::size_t count = 0;
+    CUDA_CHECK(cudaGraphGetNodes(graph, nullptr, &count));
+    std::vector<cudaGraphNode_t> nodes(count);
+    CUDA_CHECK(cudaGraphGetNodes(graph, nodes.data(), &count));
+    for (const auto node : nodes) {
+        cudaGraphNodeType type{};
+        CUDA_CHECK(cudaGraphNodeGetType(node, &type));
+        if (type == cudaGraphNodeTypeMemAlloc || type == cudaGraphNodeTypeMemFree) {
+            throw std::logic_error("decode graph storage must be allocated before capture");
+        }
+    }
     graph_ = graph;
+    captured.graph_ = nullptr;
 }
 
 bool DecodeGraphDefinition::ready() const noexcept { return graph_ != nullptr; }

@@ -5,6 +5,7 @@
 #include "core/device.h"
 #include "core/nvtx.h"
 #include "ninfer/types.h"
+#include "ninfer/monitoring.h"
 #include "runtime/contract/types.h"
 #include "runtime/engine/request_record.h"
 #include "runtime/engine/resource_manager.h"
@@ -18,6 +19,7 @@
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <deque>
 #include <exception>
 #include <future>
@@ -252,6 +254,14 @@ public:
     [[nodiscard]] RuntimeStats runtime_stats() const {
         std::lock_guard lock(stats_mutex_);
         return published_stats_;
+    }
+
+    [[nodiscard]] std::vector<ExecutionSlotState> execution_slot_states() const {
+        std::lock_guard lock(stats_mutex_);
+        if (!published_slots_.empty()) { return published_slots_; }
+        std::vector<ExecutionSlotState> idle(max_concurrency_);
+        for (std::uint32_t lane = 0; lane < max_concurrency_; ++lane) { idle[lane].id = lane; }
+        return idle;
     }
 
     [[nodiscard]] bool is_available() const {
@@ -527,6 +537,17 @@ private:
             std::lock_guard lock(queue_mutex_);
             snapshot.waiting_requests = static_cast<std::uint32_t>(pending_.size());
         }
+        std::vector<ExecutionSlotState> slot_snapshot(max_concurrency_);
+        for (std::uint32_t lane = 0; lane < max_concurrency_; ++lane) {
+            auto& state = slot_snapshot[lane];
+            state.id = lane;
+            if (const auto& request = slots_[lane]) {
+                state.processing = true;
+                state.prompt_tokens = request->prompt_summary.prompt_tokens;
+                state.cached_tokens = request->begin ? request->begin->reused_prompt_tokens : 0;
+                state.generated_tokens = static_cast<std::uint32_t>(request->generated.size());
+            }
+        }
         snapshot.prefilling_requests = 0;
         if (const auto lane = scheduler_.prefill_lane();
             lane && slots_[*lane] != nullptr && !slots_[*lane]->capture_pending) {
@@ -548,6 +569,7 @@ private:
         snapshot.host_work = cumulative_stats_.host_work;
         std::lock_guard lock(stats_mutex_);
         published_stats_ = snapshot;
+        published_slots_ = std::move(slot_snapshot);
     }
 
     void record_prefix_selection(const RequestPlanSummary& summary) noexcept {
@@ -1432,9 +1454,15 @@ private:
         }
     }
 
-    [[nodiscard]] ResourceInspection inspect_admission(const std::shared_ptr<Request>& request) {
+    [[nodiscard]] ResourceInspection inspect_admission(const std::shared_ptr<Request>& request,
+                                                       PlanningAllowance allowance) {
+        allowance.cancellation = &request->cancelled;
+        allowance.control_deadline_ns =
+            static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                           request->deadline.time_since_epoch())
+                                           .count());
         return resources_.inspect(*instance_.program, request->prompt, *request->base_plan,
-                                  request->publication_order);
+                                  request->publication_order, allowance);
     }
 
     [[nodiscard]] AdmissionProgress remove_pending_error(const std::shared_ptr<Request>& request,
@@ -1646,6 +1674,12 @@ private:
     }
 
     AdmissionProgress try_admit_one() {
+        const auto other_runnable = static_cast<std::uint32_t>(
+            std::count_if(slots_.begin(), slots_.end(), [](const auto& request) {
+                return request && !request->capture_pending &&
+                       (request->is_decode_ready() || request->is_prefilling());
+            }));
+        const PlanningAllowance allowance = PlanningAllowance::boundary(other_runnable);
         DetailScope detail(*this, &RuntimeHostWorkStats::admission_policy_ns,
                            &RuntimeHostWorkStats::admission_policy_invocations,
                            nvtx::Name::AdmissionPolicy);
@@ -1684,7 +1718,7 @@ private:
                 control_progress = true;
                 continue;
             }
-            auto head_inspection = inspect_admission(head);
+            auto head_inspection = inspect_admission(head, allowance);
             if (head_inspection.readiness == Readiness::PermanentlyInfeasible) {
                 (void)remove_pending_error(
                     head, std::make_exception_ptr(RequestError(
@@ -1758,7 +1792,7 @@ private:
                     control_progress = true;
                     continue;
                 }
-                auto candidate_inspection = inspect_admission(candidate);
+                auto candidate_inspection = inspect_admission(candidate, allowance);
                 if (candidate_inspection.readiness == Readiness::PermanentlyInfeasible) {
                     (void)remove_pending_error(
                         candidate, std::make_exception_ptr(RequestError(
@@ -1899,6 +1933,12 @@ private:
     // The worker holds execution_mutex_ across the failing operation and this cleanup, so no
     // Program introspection can observe a partially cleared physical state.
     void fail_all_locked(std::exception_ptr error) noexcept {
+        // Preserve the engine-side cause in local diagnostics; protocol error
+        // classification alone is insufficient to diagnose a failed engine.
+        try { if (error) { std::rethrow_exception(error); } }
+        catch (const std::exception& diagnostic) {
+            std::fprintf(stderr, "ENGINE FAILURE DIAGNOSTIC: %s\n", diagnostic.what());
+        } catch (...) { std::fprintf(stderr, "ENGINE FAILURE DIAGNOSTIC: unknown exception\n"); }
         std::deque<std::shared_ptr<Request>> pending;
         {
             std::lock_guard lock(queue_mutex_);
@@ -2050,6 +2090,7 @@ private:
     std::size_t current_decode_lane_count_ = 0;
     RuntimeStats cumulative_stats_;
     RuntimeStats published_stats_;
+    std::vector<ExecutionSlotState> published_slots_;
     bool stopping_ = false;
     bool failed_   = false;
     std::thread worker_;

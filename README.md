@@ -1,3 +1,5 @@
+> **Windows V100 + Swift-1.5 + KVMem（2026-10-11）**: [配置、实测与发布范围](docs/windows/SWIFT-KVMEM.md)。当前推荐 Swift，MTP K=3，默认输出 65,536；此次公开交付为源码。
+
 **English** | [简体中文](README.zh-CN.md)
 
 > **JimmyMax/ninfer-v100** — fork of [liujun-7788/ninfer-v3-v100](https://github.com/liujun-7788/ninfer-v3-v100) (itself a fork of [geoffwatts/ninfer-v100](https://github.com/geoffwatts/ninfer-v100), the Tesla V100 port of [Neroued/ninfer](https://github.com/Neroued/ninfer)).
@@ -9,7 +11,7 @@
 > This fork additionally adds **nvfp4full support for Qwen3.8-27B v3 artifacts**:
 > - Official `qwen3.8-27b/nvfp4` artifacts keep the last 8 layers' MLP in FP8; nvfp4full community conversions (e.g. [kvnxiao/swift-1.5-qwen3.8-27b-orcarouter-dflash2-nvfp4-ninfer](https://huggingface.co/kvnxiao/swift-1.5-qwen3.8-27b-orcarouter-dflash2-nvfp4-ninfer)) store the MLP as NVFP4 in **all 64 layers**.
 > - The binder now probes each artifact's actual tensor format (`Binder::peek`) and binds NVFP4 or FP8 per artifact, so **both layouts work with one binary**.
-> - Note: some community v3 artifacts declare a custom `metadata.name` (e.g. `swift-1.5-qwen3.8-27b-orcarouter`). The registry keys on `qwen3.8-27b`; if you hit `artifact identity ... has no registered target`, patch the JSON directory's `metadata.name` to `qwen3.8-27b` with length-preserving whitespace padding (no checksums inside the container).
+> - Note: some community v3 artifacts declare a custom `metadata.name` (e.g. `swift-1.5-qwen3.8-27b-orcarouter`). The registry keys on `qwen3.8-27b`; community identities are resolved through the converter recipe without modifying artifact bytes.
 >
 > Hardware target: NVIDIA Tesla **V100 (sm_70)** only. For the verified V100 build recipe, runtime flags, and MTP benchmark data see [docs/V100-BUILD.md](docs/V100-BUILD.md).
 

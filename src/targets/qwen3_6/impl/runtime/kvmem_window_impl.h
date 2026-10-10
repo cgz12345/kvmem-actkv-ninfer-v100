@@ -424,17 +424,22 @@ void ProgramImplCore::prepare_window(SequenceState& sequence, std::uint32_t begi
             }
             std::vector<std::uint32_t> counts(
                 static_cast<std::size_t>(TextConfig::full_attention_layers()), state.query_tokens);
-            state.selector->set_retrieval_scores(kvmem::mean_key_retrieval_scores(
+            const std::vector<std::uint32_t> required(mandatory.begin(), mandatory.end());
+            const auto scores = kvmem::mean_key_retrieval_scores(
                 *state.statistics, count,
                 {state.query_sum.data(), counts.data(),
                  static_cast<std::uint32_t>(TextConfig::full_attention_layers()),
                  static_cast<std::uint32_t>(TextConfig::head_dim),
                  static_cast<std::uint32_t>(TextConfig::query_heads),
-                 static_cast<std::uint32_t>(TextConfig::kv_heads)}));
-            const std::vector<std::uint32_t> required(mandatory.begin(), mandatory.end());
+                 static_cast<std::uint32_t>(TextConfig::kv_heads)});
+            state.selector->set_retrieval_scores(scores);
             const auto ids = state.selector->pick_topk_blocks(required);
             selected.assign(ids.begin(), ids.end());
             if (kvmem_options.verify_transfers) {
+                std::fprintf(stderr, "KVMEM_RETRIEVAL_SCORES logical=%u scores=", begin);
+                for (std::size_t i = 0; i < scores.size(); ++i)
+                    std::fprintf(stderr, "%s%.9g", i ? "," : "", scores[i]);
+                std::fprintf(stderr, "\n");
                 std::size_t cold = 0;
                 for (auto id : ids) {
                     if (std::find(state.pages.begin(), state.pages.end(), id) ==
@@ -923,6 +928,8 @@ bool ProgramImplCore::restore_memory_history(SequenceState& sequence,
             nullptr,
             selectors.source,
             selectors.destination,
+            0,
+            // dflash_kv_table_row; this bridge runs without DFlash (dflash == nullptr above)
             0,
             nullptr};
         bridge.cache_position_shift = window.removed_tokens;

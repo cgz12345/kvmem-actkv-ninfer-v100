@@ -796,7 +796,8 @@ ProgramImplCore::ProgramImplCore(const LoadedModelData& model_in, const Sequence
                    : std::nullopt),
       dflash_host(is_masked_draft_backend(plan.speculative_backend)
                       ? std::make_optional<PinnedHostBuffer>(sizeof(qwen3_6::DFlashDecodeIngress) +
-                                                             sizeof(qwen3_6::DFlashDecodeEgress))
+                                                             sizeof(qwen3_6::DFlashDecodeEgress) +
+                                                             sizeof(qwen3_6::DFlashPrefillIngress))
                       : std::nullopt),
       context_source_ready_(device_in), context_completion_(device_in),
       context_transfer_timers_{CudaEventTimer(device_in, device_in.transfer_stream),
@@ -1075,12 +1076,12 @@ ProgramImplCore::ProgramImplCore(const LoadedModelData& model_in, const Sequence
         dflash_host_egress  = reinterpret_cast<qwen3_6::DFlashDecodeEgress*>(
             static_cast<unsigned char*>(dflash_host->data()) +
             sizeof(qwen3_6::DFlashDecodeIngress));
-        *dflash_host_ingress = {};
-        *dflash_host_egress  = {};
-    }
-    if (io.dflash_prefill) {
-        CUDA_CHECK(cudaMemsetAsync(io.dflash_prefill->produced_count.data, 0,
-                                   io.dflash_prefill->produced_count.bytes(), device.stream));
+        *dflash_host_ingress        = {};
+        *dflash_host_egress         = {};
+        dflash_prefill_host_ingress = reinterpret_cast<qwen3_6::DFlashPrefillIngress*>(
+            static_cast<unsigned char*>(dflash_host->data()) +
+            sizeof(qwen3_6::DFlashDecodeIngress) + sizeof(qwen3_6::DFlashDecodeEgress));
+        *dflash_prefill_host_ingress = {};
     }
     CUDA_CHECK(cudaMemsetAsync(io.rope_delta.data, 0, io.rope_delta.bytes(), device.stream));
     if (io.mtp) {
@@ -1208,6 +1209,7 @@ std::vector<float> ProgramImplCore::causal_score(PreparedPromptData&& prompt,
                 nullptr,
                 state_slot,
                 state_slot,
+                0,
                 0,
                 nullptr};
             mark_workspace_usage(workspace_plan.text_prefill);
@@ -7283,6 +7285,9 @@ StartResult ProgramImplCore::start_request(MaterializationTransaction& transacti
         return StartResult{.sequence = handle};
     } catch (...) {
         if (destination && *destination < max_concurrency) {
+            // Startup may have queued work before a later publication check failed.
+            // Complete it before returning its buffers, pages or execution row to the pools.
+            device.synchronize();
             const std::uint32_t lane = *destination;
             if (active_continuations[lane] < continuation_capacity) {
                 clear_lane_best_effort(active_sequence(lane), requests[lane]);
@@ -9033,21 +9038,10 @@ runtime::ExecutionTiming ProgramImplCore::append_forced_tokens(
             }
 
             if (is_masked_draft_backend(speculative_backend)) {
-                if (!dflash || !io.dflash_decode || !sequence.kv ||
+                if (!dflash || !io.dflash_prefill || !dflash_prefill_host_ingress || !sequence.kv ||
                     (backend_kv_cache() && !sequence.kv->backend)) {
                     throw std::logic_error("DFlash forced continuation state is incomplete");
                 }
-                *dflash_host_ingress                            = {};
-                dflash_host_ingress->active_lanes[0]            = static_cast<std::int32_t>(lane);
-                const StateImageSelectors selectors             = state_selectors(sequence);
-                dflash_host_ingress->state_source_slots[0]      = selectors.source;
-                dflash_host_ingress->state_destination_slots[0] = selectors.destination;
-                dflash_host_ingress->dflash_kv_table_rows[0] =
-                    sequence.kv->backend ? backend_kv_addresses->bound_row(*sequence.kv->backend)
-                                         : 0;
-                CUDA_CHECK(cudaMemcpyAsync(io.dflash_decode->ingress.data, dflash_host_ingress,
-                                           sizeof(qwen3_6::DFlashDecodeIngress),
-                                           cudaMemcpyHostToDevice, device.stream));
             }
 
             std::uint32_t cursor = base;
@@ -9069,7 +9063,9 @@ runtime::ExecutionTiming ProgramImplCore::append_forced_tokens(
                     selectors.source,
                     selectors.destination,
                     0,
-                    dflash_host_ingress};
+                    sequence.kv->backend ? backend_kv_addresses->bound_row(*sequence.kv->backend)
+                                         : 0,
+                    dflash_prefill_host_ingress};
                 mark_workspace_usage(speculative_backend == SpeculativeBackend::Mtp
                                          ? workspace_plan.mtp_prefill
                                          : workspace_plan.text_prefill);
@@ -9388,6 +9384,9 @@ AbortResult ProgramImplCore::abort(SequenceHandle sequence) noexcept {
         return out;
     }
     SequenceState& state = active_sequence(lane);
+    // Cancellation can arrive after activation and before the first prefill unit has waited
+    // for its uploads and initialization. Settle that work before releasing reusable resources.
+    device.synchronize();
     if (!clear_lane_strict(state, request)) { return out; }
     out.timings     = request.timings;
     out.speculative = std::move(request.speculative_stats);
@@ -10098,19 +10097,10 @@ void ProgramImplCore::start_sequence(std::uint32_t lane, SequenceState& sequence
         sequence.rebuild_tail_begin = request_plan.root_rebuild_tail_begin;
 
         if (is_masked_draft_backend(speculative_backend)) {
-            if (!dflash || !io.dflash_decode || (backend_kv_cache() && !sequence.kv->backend)) {
+            if (!dflash || !io.dflash_prefill || !dflash_prefill_host_ingress ||
+                (backend_kv_cache() && !sequence.kv->backend)) {
                 throw std::logic_error("DFlash prefill state is incomplete");
             }
-            *dflash_host_ingress                       = {};
-            dflash_host_ingress->active_lanes[0]       = static_cast<std::int32_t>(sequence.lane);
-            const StateImageSelectors selectors        = state_selectors(sequence);
-            dflash_host_ingress->state_source_slots[0] = selectors.source;
-            dflash_host_ingress->state_destination_slots[0] = selectors.destination;
-            dflash_host_ingress->dflash_kv_table_rows[0] =
-                sequence.kv->backend ? backend_kv_addresses->bound_row(*sequence.kv->backend) : 0;
-            CUDA_CHECK(cudaMemcpyAsync(io.dflash_decode->ingress.data, dflash_host_ingress,
-                                       sizeof(qwen3_6::DFlashDecodeIngress), cudaMemcpyHostToDevice,
-                                       device.stream));
         }
 
         staged.elapsed_seconds += std::chrono::duration<double>(Clock::now() - started).count();
@@ -11170,7 +11160,7 @@ void ProgramImplCore::prepare_graphs() {
             controls.push_back(io.mtp->target_input_ids);
             controls.push_back(io.mtp->target_positions);
         }
-        if (io.dflash_prefill) { controls.push_back(io.dflash_prefill->produced_count); }
+        if (io.dflash_prefill) { controls.push_back(io.dflash_prefill->local_append_count); }
         for (const Tensor& tensor : controls) {
             CUDA_CHECK(cudaMemsetAsync(tensor.data, 0, tensor.bytes(), device.stream));
         }
@@ -11185,7 +11175,8 @@ void ProgramImplCore::prepare_graphs() {
             }
             cache.page_pool().zero_pages(pages, device.stream);
         };
-    const auto prepare_representative = [&](std::uint32_t frontier, std::uint32_t batch_size) {
+    const auto prepare_representative = [&](std::uint32_t frontier, std::uint32_t batch_size,
+                                            std::uint32_t verify_extent = 0) {
         if (batch_size == 0 || batch_size > max_concurrency) {
             throw std::logic_error("CUDA Graph representative batch is invalid");
         }
@@ -11246,8 +11237,9 @@ void ProgramImplCore::prepare_graphs() {
         if (io.mtp_decode) {
             *mtp_host_ingress          = {};
             *mtp_host_egress           = {};
-            const std::uint32_t extent = std::min(draft_window, capacity - frontier - 1U);
-            const std::uint32_t width  = draft_window + 1U;
+            const std::uint32_t drafts = verify_extent ? verify_extent : draft_window;
+            const std::uint32_t extent = std::min(drafts, capacity - frontier - 1U);
+            const std::uint32_t width  = drafts + 1U;
             for (std::uint32_t row = 0; row < batch_size; ++row) {
                 mtp_host_ingress->anchors[row] = 0;
                 mtp_host_ingress->base_frontiers[row] =
@@ -11257,8 +11249,8 @@ void ProgramImplCore::prepare_graphs() {
                 mtp_host_ingress->current_extents[row] = static_cast<std::int32_t>(extent);
                 mtp_host_ingress->target_valid_columns[row] =
                     static_cast<std::int32_t>(extent + 1U);
-                for (std::uint32_t step = 0; step < draft_window; ++step) {
-                    mtp_host_ingress->current_drafts[row * draft_window + step] = 0;
+                for (std::uint32_t step = 0; step < drafts; ++step) {
+                    mtp_host_ingress->current_drafts[row * drafts + step] = 0;
                 }
                 for (std::uint32_t column = 0; column < width; ++column) {
                     mtp_host_ingress->target_rope_positions[row * width + column] =
@@ -11310,10 +11302,11 @@ void ProgramImplCore::prepare_graphs() {
             *io.ordinary,          *ordinary_host_ingress,
             *ordinary_host_egress, state_images->continuation_hidden_store()};
         const GraphExecutionProfile code_warm = ordinary_profiles.front();
-        prepare_representative(code_warm.min, 1);
+        prepare_representative(code_warm.min, ordinary_batch_limit);
         device.synchronize();
-        schedule::ordinary_decode_batch(ordinary_state, 1, {code_warm.min + 1, code_warm.max + 1},
-                                        nullptr);
+        schedule::ordinary_decode_batch(
+            ordinary_state, static_cast<std::int32_t>(ordinary_batch_limit),
+            {code_warm.min + 1, code_warm.max + 1}, nullptr);
         device.synchronize();
 
         ordinary_graphs.profiles.reserve(ordinary_profiles.size() * ordinary_batch_limit);
@@ -11346,10 +11339,10 @@ void ProgramImplCore::prepare_graphs() {
                                             *mtp_host_egress,
                                             state_images->continuation_hidden_store()};
         const GraphExecutionProfile code_warm = planned_profiles.front();
-        prepare_representative(code_warm.min, 1);
+        prepare_representative(code_warm.min, max_concurrency);
         device.synchronize();
         schedule::mtp_decode_batch(
-            mtp_state, 1, draft_window, draft_window,
+            mtp_state, static_cast<std::int32_t>(max_concurrency), draft_window, draft_window,
             mtp_causal_attention_envelopes(code_warm.max, draft_window, draft_window, graph_capacity()),
             nullptr);
         device.synchronize();
@@ -11386,6 +11379,18 @@ void ProgramImplCore::prepare_graphs() {
                                                *mtp_host_ingress,
                                                *mtp_host_egress,
                                                state_images->continuation_hidden_store()};
+        // GGUF convenience projections grow their activation scratch with width.
+        // Allocate it before capture: an allocation node embedded in the first
+        // lookup profile cannot be shared by sibling executable profiles.
+        prepare_representative(lookup_profiles.front().min, max_concurrency, lookup_k);
+        device.synchronize();
+        work.reset();
+        schedule::mtp_decode_batch(
+            lookup_state, static_cast<std::int32_t>(max_concurrency), lookup_k,
+            lookup_proposal_k,
+            mtp_causal_attention_envelopes(lookup_profiles.front().max, lookup_k,
+                                          lookup_proposal_k, graph_capacity()), nullptr);
+        device.synchronize();
         mtp_lookup_graphs.profiles.reserve(lookup_profiles.size() * max_concurrency);
         for (std::uint32_t batch_size = 1; batch_size <= max_concurrency; ++batch_size) {
             for (const GraphExecutionProfile planned : lookup_profiles) {
@@ -11459,7 +11464,10 @@ void ProgramImplCore::prepare_graphs() {
     if (speculative_backend == SpeculativeBackend::Mtp) {
         instantiate_graph_family(mtp_graphs, "MTP", device, prepare_representative);
         instantiate_graph_family(mtp_lookup_graphs, "MTP lookup", device,
-                                 prepare_representative);
+                                 [&](std::uint32_t frontier, std::uint32_t batch) {
+                                     prepare_representative(frontier, batch,
+                                                           qwen3_6::kMtpLookupMaximumDrafts);
+                                 });
     }
     if (is_masked_draft_backend(speculative_backend)) {
         instantiate_graph_family(dflash_graphs, "DFlash", device, prepare_representative);
@@ -11698,7 +11706,8 @@ ProgramImplCore::advance_prefill(SequenceState& sequence, RequestControl& reques
             selectors.source,
             selectors.destination,
             staged.initial_mtp_extent,
-            dflash_host_ingress};
+            0,
+            dflash_prefill_host_ingress};
 
         if (staged.mtp_bridge == MtpBridgeMode::BeforeSuffix) {
             if (staged.cursor != staged.base || staged.base == 0 ||
@@ -11764,6 +11773,9 @@ ProgramImplCore::advance_prefill(SequenceState& sequence, RequestControl& reques
                 selectors                             = state_selectors(sequence);
                 schedule_state.state_source_slot      = selectors.source;
                 schedule_state.state_destination_slot = selectors.destination;
+                schedule_state.dflash_kv_table_row =
+                    sequence.kv->backend ? backend_kv_addresses->bound_row(*sequence.kv->backend)
+                                         : 0;
                 if (staged.next_capture < staged.capture_groups.size()) {
                     rewrite_capture_hidden =
                         state_images->continuation_hidden_slot(selectors.destination);
@@ -12232,7 +12244,8 @@ ProgramImplCore::decode_mtp_batch(std::span<const std::uint32_t> lanes,
         DecodeGraphExecutable* executable = nullptr;
         schedule::MtpCausalAttentionEnvelopes envelopes =
             mtp_causal_attention_envelopes(maximum_frontier, verify_k, proposal_k, graph_capacity());
-        if (use_cuda_graph) {
+        const bool replay_graph = use_cuda_graph;
+        if (replay_graph) {
             DecodeGraphProfile& profile =
                 select_graph_profile(graph_family, static_cast<std::uint32_t>(lanes.size()),
                                      maximum_frontier, "MTP batch");

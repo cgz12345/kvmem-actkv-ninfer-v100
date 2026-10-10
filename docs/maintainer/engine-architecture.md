@@ -487,6 +487,8 @@ ResourceManager 与完成所有 request response。内部不变量错误不能�
 - growing KV 由共享 paged pools 支持，active request 持有完整增长 reservation；
 - 一个 GPU execution unit 内 State/KV mapping 保持稳定；
 - CUDA Graph 按合法 exact-`B` topology 建立，request identity 和 page IDs 是稳定输入数据，不是 graph key；
+- decode 图只借用图外建立的设备存储，捕获不得含 allocation/free 节点；GGUF 宽 lookup
+  与最大并发宽度在捕获前预热，避免首次重放后留下图内分配、导致后续重放失败；
 - ordinary decode 不运行 catalog scan、pressure search 或后台 replica scan；
 - workspace 是 Program 启动时统一规划的 backing，Vision、Text 和 speculative schedule 按互斥 lifetime
   使用其内部区域。

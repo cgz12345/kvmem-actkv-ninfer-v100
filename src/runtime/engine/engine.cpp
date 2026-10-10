@@ -230,6 +230,7 @@ public:
         auto constructed  = targets::construct_target(options, device);
         active            = std::move(constructed.active);
         load              = std::move(constructed.load);
+        load.cuda_sync_mode = device.sync_mode();
         sampling_defaults = constructed.sampling_defaults;
         StartupPhaseScope finalize_phase(options.startup_observer, StartupPhase::EngineFinalize);
         core = std::visit(
@@ -518,6 +519,21 @@ RuntimeStats Engine::runtime_stats() const {
             }
         },
         impl_->core);
+}
+
+std::vector<ExecutionSlotState> Engine::execution_slot_states() const {
+    if (impl_ == nullptr) { throw std::logic_error("Engine is moved from"); }
+    return std::visit(
+        [](const auto& core) -> std::vector<ExecutionSlotState> {
+            using CoreState = std::remove_cvref_t<decltype(core)>;
+            if constexpr (std::is_same_v<CoreState, std::monostate>) {
+                throw std::logic_error("Engine core is unavailable");
+            } else if constexpr (requires { core->execution_slot_states(); }) {
+                return core->execution_slot_states();
+            } else {
+                return {}; // Offline causal scoring has no generation lanes.
+            }
+        }, impl_->core);
 }
 
 bool Engine::is_available() const {

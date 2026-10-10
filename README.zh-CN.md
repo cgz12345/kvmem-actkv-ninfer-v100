@@ -1,3 +1,5 @@
+> **Windows V100 + Swift-1.5 + KVMem（2026-10-11）**: [配置、实测与发布范围](docs/windows/SWIFT-KVMEM.md)。当前推荐 Swift，MTP K=3，默认输出 65,536；此次公开交付为源码。
+
 [English](README.md) | **简体中文**
 
 > **ninfer-v3-v100** — [geoffwatts/ninfer-v100](https://github.com/geoffwatts/ninfer-v100)（即 [Neroued/ninfer](https://github.com/Neroued/ninfer) 的 Tesla V100 分支）的持续维护分支，新增**对官方 v3 `.ninfer` 工件的直接读取支持**——官方下载的 [neroued/Qwen3.8-27B-nvfp4-NInfer](https://huggingface.co/neroued/Qwen3.8-27B-nvfp4-NInfer) 等工件无需转换即可直接运行。经验证的 V100 编译指南、运行参数与 MTP 基准数据见 **[V100 编译与运行指南（中文版）](docs/V100-BUILD.zh-CN.md)**（[英文版](docs/V100-BUILD.md)）。本分支与上游作者无隶属或背书关系。

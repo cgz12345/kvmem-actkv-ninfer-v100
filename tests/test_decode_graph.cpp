@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <exception>
 #include <iostream>
+#include <stdexcept>
 
 namespace {
 
@@ -75,6 +76,24 @@ int main() {
         executable.launch(device.stream);
         device.synchronize();
         failures += expect_value(storage.base(), 0x22222222U, "updated graph launch");
+        for (int replay = 0; replay < 3; ++replay) {
+            executable.launch(device.stream);
+            device.synchronize();
+            failures += expect_value(storage.base(), 0x22222222U, "repeated graph launch");
+        }
+        ninfer::DecodeGraphDefinition allocating;
+        bool rejected = false;
+        try {
+            allocating.capture(device.stream, [&] {
+                void* scratch = nullptr;
+                CUDA_CHECK(cudaMallocAsync(&scratch, 1024, device.stream));
+                CUDA_CHECK(cudaMemsetAsync(scratch, 0, 1024, device.stream));
+            });
+        } catch (const std::logic_error&) { rejected = true; }
+        if (!rejected || allocating.ready()) {
+            std::cerr << "graph-owned transient allocation was not rejected\n";
+            ++failures;
+        }
         return failures == 0 ? 0 : 1;
     } catch (const std::exception& error) {
         std::cerr << "decode graph test failed: " << error.what() << '\n';

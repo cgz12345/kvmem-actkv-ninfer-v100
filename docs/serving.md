@@ -103,8 +103,8 @@ The endpoint supports:
   separators, and empty wire content remains an empty turn;
 - User `image_url` parts, tool-result `image_url` parts used by compatible clients, and the User
   `video_url` extension using HTTP(S) or data URIs; image detail is omitted, `auto` or `high`
-  (both use the server's Vision bound), while `low` is refused with
-  `image_detail_low_not_supported` and any other value with `image_detail_not_supported` unless
+  (both use the server's Vision bound), or `low` (at most 256 merged image tokens).
+  Unknown values are refused with `image_detail_not_supported` unless
   `--lenient-image-detail` reads it as `auto`;
 - nonnegative `max_completion_tokens` and the legacy `max_tokens` spelling, or `-1` for no limit
   (the whole context becomes the budget, and Engine still stops at the context remaining after the
@@ -130,7 +130,7 @@ The endpoint supports:
 Options whose observable behavior the Engine cannot provide are rejected when they request that
 behavior. This includes JSON constrained output, nonzero `logit_bias`, requested log probabilities,
 audio/file input or audio output, `strict:true`, required or named tool choice,
-`parallel_tool_calls:false` with enabled tools, image detail `low` or an unknown detail value, web
+`parallel_tool_calls:false` with enabled tools, an unknown image detail value, web
 search, moderation, low/high verbosity, stored Chat Completions, and non-empty legacy `functions`.
 Each capability rejection identifies the affected field and the guarantee NInfer cannot provide.
 Known constrained-decoding aliases (`grammar`, `structured_outputs`, `guided_json`, `guided_regex`,
@@ -453,7 +453,7 @@ String `input` is normalized to one user `message` with an `input_text` part. Ar
 | `input_text` | message content part containing string `text` |
 | `output_text` | assistant-message replay part containing string `text` |
 | `refusal` | assistant-message replay part; its text enters assistant history |
-| `input_image` | user- or assistant-message part with HTTP(S) or data-URI `image_url`; detail omitted, `auto` or `high` (both use the server's Vision bound), `low` refused with `image_detail_low_not_supported`; requires server `--vision` |
+| `input_image` | user- or assistant-message part with HTTP(S) or data-URI `image_url`; detail omitted, `auto` or `high` (server Vision bound), or `low` (at most 256 merged image tokens); requires server `--vision` |
 | `input_video` | NInfer extension with HTTP(S) or data-URI `video_url`; requires server `--vision` |
 | `reasoning` | raw replay Item with `reasoning_text` content; summary/encrypted metadata may accompany raw text but cannot replace it |
 | `function_call` | completed assistant call with optional `id` and namespace, plus required `call_id`, `name`, and JSON-object string `arguments` |
@@ -479,7 +479,7 @@ An `input_text`, `input_image`, or tool-result part may carry
 identity or output semantics. String message status/phase metadata is accepted but has no Qwen
 prompt representation.
 
-`input_file`, `input_audio`, image `file_id`, image detail `low` or an unknown detail value,
+`input_file`, `input_audio`, image `file_id`, an unknown image detail value,
 reasoning metadata without raw
 reasoning text, partial tool Items, and other Item/content types are not supported. HTTP media URLs
 stored in a response chain are fetched again when that chain is continued; use data URIs when the
@@ -792,7 +792,7 @@ The table lists executable defaults. The startup example selects a long-context 
 | `--spec mtp\|dflash\|dflash2` | speculative backend | off |
 | `--draft-tokens N` | MTP `1..5`; DFlash/DFlash2 `1..15` | unset |
 | `--lm-head-draft` | optimized proposal head | off |
-| `--default-max-tokens N` | output limit when omitted by a request | `8192` |
+| `--default-max-tokens N` | output limit when omitted by a request | `65536` |
 | `--default-thinking-budget N` | positive thinking cap inherited by thinking-enabled requests | unset |
 | `--vision` | enable media input and load Vision GPU allocations | off |
 | `--no-cuda-graph` | disable CUDA Graph decode | graphs on |
@@ -1022,3 +1022,16 @@ decoding.
 
 Prompt-token usage includes chat-template and expanded media tokens. Generated-token usage comes
 from accepted output token IDs, including a stop token whose decoded text may be withheld.
+
+## Runtime monitoring
+
+`GET /stats` returns the `ninfer.runtime.v1` JSON snapshot. `GET /metrics` exposes
+Prometheus text metrics with the `ninfer_` prefix. Both use published worker statistics,
+without synchronizing GPU execution. Counters reset at process restart. Computed prefill
+counts Engine-reported visible prefill tokens (excluding reused prefixes and hidden KVMem replay),
+and committed decode excludes
+the first token emitted by prefill; these are execution counters, not billing usage. Native Host KV and transfer
+metrics exclude the KVMem bridge's separately owned history buffers and transfers.
+`GET /slots` exposes one published execution-lane entry per configured concurrency, with
+processing, prompt/cache and generated-token counts. IDs refer to execution lanes, not
+retained history cells; save/restore/erase actions are not implemented.
