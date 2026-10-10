@@ -94,6 +94,16 @@ jobs:
           cmake --build build -j"$(nproc)"
           ccache --show-stats || true
 
+      # actions/cache's post-save skips on job failure; retrying a failed run
+      # would otherwise recompile everything from a cold cache.
+      - name: Save ccache (also on failure)
+        if: always()
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: .ccache
+          key: ccache-ci-sm70-${{ github.sha }}
+
       # GitHub gates Actions logs behind sign-in. On a failed configure or
       # build, replay the failing step and publish the error tail to the job
       # summary (publicly viewable without login) plus error annotations.
