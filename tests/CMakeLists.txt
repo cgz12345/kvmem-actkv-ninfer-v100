@@ -170,7 +170,13 @@ ninfer_add_test(ninfer_qwen3_6_27b_load_plan_test
 target_include_directories(ninfer_qwen3_6_27b_load_plan_test PRIVATE
   ${PROJECT_SOURCE_DIR}/src/targets/qwen3_6/export
   ${PROJECT_SOURCE_DIR}/src/targets/qwen3_6_27b/export)
-target_link_libraries(ninfer_qwen3_6_27b_load_plan_test PRIVATE CUDA::cudart)
+# ggml_quants builds with the static CUDA runtime (CUDA_RUNTIME_LIBRARY Static); linking the
+# shared cudart here duplicates every cudart symbol on Windows (LNK2005/LNK1169).
+if(WIN32)
+  target_link_libraries(ninfer_qwen3_6_27b_load_plan_test PRIVATE CUDA::cudart_static)
+else()
+  target_link_libraries(ninfer_qwen3_6_27b_load_plan_test PRIVATE CUDA::cudart)
+endif()
 set_tests_properties(ninfer_qwen3_6_27b_load_plan_test PROPERTIES SKIP_RETURN_CODE 77)
 ninfer_add_test(ninfer_qwen3_6_35b_a3b_real_test
   SOURCES targets/qwen3_6_35b_a3b/test_engine_real.cpp

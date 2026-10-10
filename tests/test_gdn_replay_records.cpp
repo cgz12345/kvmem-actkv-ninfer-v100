@@ -14,9 +14,15 @@ namespace {
 using AlignedBacking = std::unique_ptr<void, decltype(&std::free)>;
 
 AlignedBacking make_backing(std::size_t bytes) {
+#if defined(_MSC_VER)
+    void* data = _aligned_malloc(bytes, 256);
+    if (data == nullptr) { throw std::bad_alloc(); }
+    return AlignedBacking(data, &(_aligned_free));
+#else
     void* data = std::aligned_alloc(256, bytes);
     if (data == nullptr) { throw std::bad_alloc(); }
     return AlignedBacking(data, &std::free);
+#endif
 }
 
 int fail(const char* label) {

@@ -468,6 +468,7 @@ private:
         for (;;) {
             skip_format_whitespace(text_, pos);
             if (consume(pos, kFunctionClose)) { return FallbackReason::None; }
+            if (starts_with_at(text_, pos, kToolClose)) { return FallbackReason::None; }
             const FallbackReason failure = parse_parameter(pos, call);
             if (failure != FallbackReason::None) { return failure; }
         }
@@ -488,12 +489,32 @@ private:
 
         const std::size_t value_begin = name_end + 1;
         std::size_t value_end         = 0;
-        if (!find_parameter_close(value_begin, value_end)) {
-            return FallbackReason::MalformedStructure;
+        if (find_parameter_close(value_begin, value_end)) {
+            pos = value_end + kParamClose.size();
+        } else {
+            // Tolerate a missing </parameter>: models occasionally drop the parameter
+            // and function closes and jump straight to </tool_call>. The value then
+            // ends at the earliest surviving closer, which the caller consumes. A
+            // nested unbalanced <parameter= open stays rejected: the value boundary
+            // would be ambiguous.
+            const std::size_t function_close = text_.find(kFunctionClose, value_begin);
+            const std::size_t tool_close     = text_.find(kToolClose, value_begin);
+            if (function_close == std::string_view::npos &&
+                tool_close == std::string_view::npos) {
+                return FallbackReason::MalformedStructure;
+            }
+            value_end = function_close == std::string_view::npos ? tool_close
+                        : tool_close == std::string_view::npos   ? function_close
+                                                                 : std::min(function_close,
+                                                                            tool_close);
+            std::size_t nested_open_end = 0;
+            if (find_parameter_open_before(value_begin, value_end, nested_open_end)) {
+                return FallbackReason::MalformedStructure;
+            }
+            pos = value_end;
         }
         call.parameters.push_back(RawParameter{
             .name = name, .value = text_.substr(value_begin, value_end - value_begin)});
-        pos = value_end + kParamClose.size();
         return FallbackReason::None;
     }
 

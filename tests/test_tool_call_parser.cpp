@@ -559,9 +559,33 @@ int test_strict_structure_and_active_tool_set() {
     const std::string missing_parameter_close =
         "<tool_call>\n<function=configure>\n<parameter=value>\nx\n"
         "</function>\n</tool_call>";
-    failures += check_rejected(missing_parameter_close, contract,
+    {
+        const auto parsed = fi::parse_qwen_tool_call_output(missing_parameter_close, 64, contract);
+        failures += check(parsed.is_tool_call_response && parsed.content.empty() &&
+                              parsed.tool_calls.size() == 1 &&
+                              parsed.tool_calls.front().arguments_json == "{\"value\":\"x\"}" &&
+                              parsed.diagnostics.fallback_reason ==
+                                  ninfer::ToolCallParseFallbackReason::None,
+                          "missing parameter close before the function close was not repaired");
+    }
+
+    const std::string missing_function_close =
+        "<tool_call>\n<function=configure>\n<parameter=value>\nx\n</tool_call>";
+    {
+        const auto parsed = fi::parse_qwen_tool_call_output(missing_function_close, 64, contract);
+        failures += check(parsed.is_tool_call_response && parsed.content.empty() &&
+                              parsed.tool_calls.size() == 1 &&
+                              parsed.tool_calls.front().arguments_json == "{\"value\":\"x\"}" &&
+                              parsed.diagnostics.fallback_reason ==
+                                  ninfer::ToolCallParseFallbackReason::None,
+                          "missing parameter and function closes were not repaired");
+    }
+
+    const std::string truncated_region =
+        "<tool_call>\n<function=configure>\n<parameter=value>\nx";
+    failures += check_rejected(truncated_region, contract,
                                ninfer::ToolCallParseFallbackReason::MalformedStructure,
-                               "missing parameter close was repaired");
+                               "a region without any closer was accepted");
 
     const std::string duplicate = tool_call("configure", {{"value", "first"}, {"value", "second"}});
     failures +=
