@@ -11715,6 +11715,9 @@ ProgramImplCore::advance_prefill(SequenceState& sequence, RequestControl& reques
                 throw std::logic_error("staged MTP bridge is outside the reusable suffix");
             }
             mark_workspace_usage(workspace_plan.mtp_prefill);
+            // The bridge runs before the first suffix chunk, so the schedule context has no
+            // chunk-assigned shift yet; the restored window view is the authority here.
+            schedule_state.execution.cache_position_shift = sequence.window.removed_tokens;
             const Tensor& previous_hidden = sequence.tail_hidden;
             const schedule::MtpBridgeInput bridge{
                 .previous_hidden = &previous_hidden,
@@ -11925,6 +11928,9 @@ ProgramImplCore::advance_prefill(SequenceState& sequence, RequestControl& reques
                     throw std::logic_error("zero-suffix MTP reuse has no exact-hit bridge");
                 }
                 mark_workspace_usage(workspace_plan.mtp_prefill);
+                // Zero-suffix reuse skips the chunk loop that normally assigns the shift; the
+                // restored window view is the authority for the full-prefix bridge.
+                schedule_state.execution.cache_position_shift = sequence.window.removed_tokens;
                 const auto bridge_rope =
                     prompt_rope_position(staged.prompt, staged.prompt_tokens - 1);
                 schedule::mtp_bridge_and_propose(

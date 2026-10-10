@@ -61,9 +61,6 @@ struct PrefillContext {
     std::uint32_t mtp_proposal_extent                          = 0;
     std::int32_t dflash_kv_table_row                           = 0;
     qwen3_6::DFlashPrefillIngress* dflash_prefill_host_ingress = nullptr;
-    // KVMem compact-view shift: cache positions are logical positions minus this value;
-    // RoPE positions stay logical (rope_delta absorbs the shift).
-    std::uint32_t cache_position_shift = 0;
 };
 
 struct OrdinaryBatchContext {

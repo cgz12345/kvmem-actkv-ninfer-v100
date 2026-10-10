@@ -261,7 +261,15 @@ void validate_batched_attention_tensors(const Tensor& q, const Tensor& positions
         envelope.max_visible_keys > kCausalAttentionMaximumVisibleKeys ||
         envelope.max_visible_keys > capacity ||
         (!masked && envelope.max_visible_keys < static_cast<std::uint32_t>(width))) {
-        throw std::invalid_argument(std::string(op) + ": invalid execution envelope or table");
+        throw std::invalid_argument(
+            std::string(op) + ": invalid execution envelope or table"
+            " (batch=" + std::to_string(batch) + " width=" + std::to_string(width) +
+            " block_table_cols=" + std::to_string(cache.block_tables.ne[1]) +
+            " envelope=[" + std::to_string(envelope.min_visible_keys) + "," +
+            std::to_string(envelope.max_visible_keys) + "]" +
+            " capacity=" + std::to_string(capacity) +
+            " limit=" + std::to_string(kCausalAttentionMaximumVisibleKeys) +
+            " masked=" + (masked ? "1" : "0") + ")");
     }
 }
 

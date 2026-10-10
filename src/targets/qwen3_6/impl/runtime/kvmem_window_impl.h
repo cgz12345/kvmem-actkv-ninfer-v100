@@ -786,7 +786,6 @@ void ProgramImplCore::restore_memory_prefix(SequenceState& sequence,
     } else {
         prepare_window(sequence, frontier, frontier, true);
     }
-    sequence.tail_hidden_valid = true;
 }
 
 void ProgramImplCore::bind_memory_snapshot(SequenceState& sequence) {
@@ -932,7 +931,9 @@ bool ProgramImplCore::restore_memory_history(SequenceState& sequence,
             // dflash_kv_table_row; this bridge runs without DFlash (dflash == nullptr above)
             0,
             nullptr};
-        bridge.cache_position_shift = window.removed_tokens;
+        // The card and MTP bridge read ExecutionCore::cache_position_shift; the compact view
+        // starts at the restored window's logical start.
+        bridge.execution.cache_position_shift = window.removed_tokens;
         set_device_i32(io.rope_delta,
                        sequence.rope_delta + checked_i32(window.removed_tokens,
                                                          "restored MTP cache shift"));
