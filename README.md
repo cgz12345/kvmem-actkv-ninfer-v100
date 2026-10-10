@@ -1,3 +1,52 @@
+# KVMem NInfer · Windows V100 · Swift-1.5
+
+在 Tesla V100 16GB 上运行 Swift-1.5 Qwen3.8-27B：KVMem 长上下文、MTP 投机、图片输入和 OpenAI 兼容 API。
+
+**[安装、模型下载、构建与启动 →](docs/windows/SWIFT-KVMEM.md)**
+
+## 快速开始
+
+```powershell
+git clone https://github.com/cgz12345/ninfer-v100.git
+cd ninfer-v100
+```
+
+1. 按安装指南配置 Windows、Visual Studio C++、CUDA 12.8、CMake、Ninja 和视觉依赖。
+2. 下载 Swift IQ3_S 模型到 `models/swift15_iq3s_mtp.ninfer`，遵守模型许可证。
+3. 构建后执行 `scripts/windows/start-swift15-256k.bat`。
+4. API 地址 `http://127.0.0.1:8088/v1`；模型名 `qwen3.8-27b`；未启用鉴权，key 可填 `local`。
+
+```python
+from openai import OpenAI
+client = OpenAI(base_url="http://127.0.0.1:8088/v1", api_key="local")
+r = client.chat.completions.create(
+    model="qwen3.8-27b",
+    messages=[{"role": "user", "content": "你好，介绍一下你自己"}],
+    max_tokens=512,
+)
+print(r.choices[0].message.content)
+```
+
+## 验证范围
+
+- Swift：4030 输入 / 256 输出，无缓存两次，输出 **96.6 tokens/s**，总耗时约 9.7 秒。
+- 图片 high/low、Responses 图片接口、监控验证通过；复杂 OCR/多图/视频未全面验收。
+- 逻辑上下文 262144，GPU KV 工作窗口 32768；KVMem 选择历史页面，不是全量注意力。
+- 默认输出上限 65536；不保证模型生成到上限，完整 65536 输出尚未验证。
+- 修复长距离统计、历史恢复/传输同步及 lookup CUDA Graph 分配问题。
+- 当前公开版本是**源码发布**，不包含模型、DLL 或 Windows 可执行包。FFmpeg 二进制分发资料仍待补齐。
+
+## 许可与贡献
+
+引擎遵守根目录 [LICENSE](LICENSE)；上游和第三方署名见 [NOTICE](NOTICE)。
+Swift 权重另适用其下载源的 Swift Open License 和底座许可证。
+问题请附显卡、系统、构建版本、启动参数及脱敏日志；欢迎通过 Issues / Pull Requests 反馈和贡献。
+本机实测针对 Windows V100；其他平台参考下方上游文档，未经本版本完整验收。
+
+---
+
+## 上游与历史说明
+
 > **Windows V100 + Swift-1.5 + KVMem（2026-10-11）**: [配置、实测与发布范围](docs/windows/SWIFT-KVMEM.md)。当前推荐 Swift，MTP K=3，默认输出 65,536；此次公开交付为源码。
 
 **English** | [简体中文](README.zh-CN.md)
