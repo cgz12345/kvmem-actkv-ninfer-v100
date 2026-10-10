@@ -38,7 +38,7 @@ print(r.choices[0].message.content)
 
 ## 许可与贡献
 
-引擎遵守根目录 [LICENSE](LICENSE)；上游和第三方署名见 [NOTICE](NOTICE)。
+引擎遵守根目录 [LICENSE](LICENSE)；上游和第三方署名见 [NOTICE](NOTICE.md)。
 Swift 权重另适用其下载源的 Swift Open License 和底座许可证。
 问题请附显卡、系统、构建版本、启动参数及脱敏日志；欢迎通过 Issues / Pull Requests 反馈和贡献。
 本机实测针对 Windows V100；其他平台参考下方上游文档，未经本版本完整验收。
