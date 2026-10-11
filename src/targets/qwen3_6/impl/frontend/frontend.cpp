@@ -979,6 +979,7 @@ public:
     PrefixExecutionTracker preview_prefix_execution;
     std::optional<std::uint32_t> preview_execution_split_after;
     PublishedOutput preview_output;
+    FinishReason preview_finish_reason = FinishReason::None;
     fi::ToolCallOutputDecoder tool_call_output;
     std::vector<GeneratedToolCall> tool_calls;
     ToolCallParseDiagnostics tool_call_parse;
@@ -1090,6 +1091,7 @@ runtime::OutputDecision OutputSession::preview_model(std::span<const TokenId> to
     const auto complete = [&](std::uint32_t count, FinishReason reason,
                               runtime::ContinuationAction continuation =
                                   runtime::ContinuationAction::Decode) {
+        impl_->preview_finish_reason = reason;
         if (reason != FinishReason::None) { impl_->preview_semantic.control_pending = false; }
         if (impl_->preview_execution_split_after && *impl_->preview_execution_split_after > count) {
             throw std::logic_error("prefix execution split exceeds the accepted token prefix");
@@ -1272,6 +1274,7 @@ runtime::OutputDecision OutputSession::preview_terminal(FinishReason reason) {
     impl_->preview_output.clear();
     terminalize(impl_->preview_state, impl_->policy, impl_->preview_output, 0);
     impl_->preview_ready = true;
+    impl_->preview_finish_reason = reason;
     return runtime::OutputDecision{.accepted_tokens = 0, .finish_reason = reason};
 }
 
@@ -1291,7 +1294,8 @@ PublishedOutput OutputSession::commit_preview() {
         }
     }
     if (impl_->state.terminal) {
-        fi::ToolCallOutputDecoder::Terminal terminal = impl_->tool_call_output.finish();
+        fi::ToolCallOutputDecoder::Terminal terminal = impl_->tool_call_output.finish(
+            impl_->preview_finish_reason == FinishReason::StopToken);
         impl_->tool_calls                            = std::move(terminal.tool_calls);
         impl_->tool_call_parse                       = terminal.diagnostics;
         if (!terminal.content.empty()) {

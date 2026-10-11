@@ -130,6 +130,8 @@ struct MtpPlan {
     artifact::ObjectHandle hidden_norm;
     artifact::ObjectHandle input_norm;
     WeightPlan query_key_gate_value;
+    // Native GGUF stores independent q+gate, key and value block matrices.
+    std::optional<std::array<WeightPlan, 3>> split_projection;
     artifact::ObjectHandle query_norm;
     artifact::ObjectHandle key_norm;
     WeightPlan output;
@@ -185,6 +187,7 @@ struct BindingPlan {
 
     qwen3_6::VisionBackbonePlan vision_backbone;
     qwen3_6::VisionMergerInputPlan vision_merger_input;
+    artifact::NumericFormat vision_merger_fc2_format = artifact::NumericFormat::W8G32_F16S;
     artifact::ObjectHandle vision_merger_fc2;
     artifact::ObjectHandle vision_merger_fc2_bias;
     qwen3_6::VisionMergerNormPlan vision_merger_norm;
@@ -261,6 +264,7 @@ struct GdnProjectionPayload {
 };
 
 struct MtpAttentionPayload {
+    bool split_projection = false;
     Weight packed;
     Weight query;
     Weight key;

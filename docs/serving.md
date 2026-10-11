@@ -183,7 +183,12 @@ properties, perform recursive JSON Schema validation, or use constrained decodin
 String parameters preserve function/tool-call markers and balanced nested
 `<parameter=...>...</parameter>` text as value bytes. The Qwen wire format has no delimiter escape,
 so an unmatched nested parameter opener or a standalone `</parameter>` cannot be represented
-unambiguously; either causes the complete tool-call region to fall back to ordinary content.
+unambiguously; ambiguous regions fall back to ordinary content. Missing parameter closes can be
+recovered at a declared sibling parameter on a fresh line, provided the tool contract is
+unambiguous. At a natural model stop token, declared nonempty terminal parameters and missing
+function/tool closes can also be recovered. Output/context limits, cancellation, stop strings,
+unknown sibling names, duplicate arguments and inline unmatched openers do not license this
+terminal recovery. Argument bytes are preserved; the server does not execute tools itself.
 
 Message roles retain their input order through schema translation. The Qwen family frontend maps
 both `system` and `developer` to system-class ChatML blocks at their original positions; it does not
@@ -1036,3 +1041,7 @@ metrics exclude the KVMem bridge's separately owned history buffers and transfer
 `GET /slots` exposes one published execution-lane entry per configured concurrency, with
 processing, prompt/cache and generated-token counts. IDs refer to execution lanes, not
 retained history cells; save/restore/erase actions are not implemented.
+
+## Native GGUF models
+
+The server accepts supported Qwen/Swift dense 27B `.gguf` files through the native CUDA engine. See [native GGUF loading](maintainer/native-gguf-loading.md) for exact geometry, quantization formats and required embedded frontend metadata. This route supports text generation, tools and embedded MTP (`--spec mtp --draft-tokens 3`). A file missing its MTP layer fails clearly when MTP is selected. Add `--lm-head-draft` for the indexed proposal head and `--vision --mmproj projector.gguf` for a matching native vision projector. No frontend companion directory is required. DFlash is not supported on this route.

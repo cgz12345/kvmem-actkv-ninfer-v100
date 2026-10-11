@@ -133,20 +133,20 @@ MaterializedArtifact materialize(const Reader& reader, const MaterializationPlan
     std::uint64_t copied         = 0;
     std::uint64_t last_published = 0;
     for (const DeviceMaterialization& placement : plan.device_objects) {
-        const PayloadSpan payload = reader.payload(reader.objects().at(placement.object.index));
+        const auto source_offset = reader.absolute_offset(reader.objects().at(placement.object.index));
         DeviceSpan storage =
             out.device_arena_->alloc_bytes(static_cast<std::size_t>(placement.bytes),
                                            static_cast<std::size_t>(placement.alignment));
         const auto actual_offset =
             static_cast<std::uint64_t>(static_cast<std::byte*>(storage.data) -
                                        static_cast<std::byte*>(out.device_arena_->base()));
-        if (actual_offset != placement.offset || payload.data.size() != placement.bytes) {
+        if (actual_offset != placement.offset || object_bytes(reader.objects().at(placement.object.index)) != placement.bytes) {
             throw ArtifactError("materialization plan does not match artifact payload");
         }
         out.objects_.at(placement.object.index).device = storage.data;
         ranges.push_back(CopyRange{
-            .source_begin = payload.absolute_offset,
-            .source_end   = checked_add(payload.absolute_offset, placement.bytes,
+            .source_begin = source_offset,
+            .source_end   = checked_add(source_offset, placement.bytes,
                                         "artifact tensor source range overflows u64"),
             .destination  = static_cast<std::byte*>(storage.data),
         });

@@ -148,7 +148,8 @@ class Reader {
 public:
     static constexpr std::size_t direct_io_alignment = 4096;
 
-    explicit Reader(const std::filesystem::path& path);
+    explicit Reader(const std::filesystem::path& path,
+                    const std::filesystem::path& mmproj = {});
     ~Reader();
 
     Reader(Reader&&) noexcept;
@@ -164,8 +165,12 @@ public:
     const std::vector<ObjectDescriptor>& objects() const noexcept;
     const ObjectDescriptor* find(std::string_view name) const noexcept;
 
+    [[nodiscard]] bool is_native_gguf() const noexcept;
+    // Materialization address: physical file offset for .ninfer, virtual row-view address for GGUF.
+    std::uint64_t absolute_offset(const ObjectDescriptor& object) const;
     std::uint64_t file_bytes() const noexcept;
     std::uint64_t payload_offset() const noexcept;
+    // Row-mapped GGUF tensors require read_direct; they cannot expose a contiguous mapped span.
     PayloadSpan payload(const ObjectDescriptor& object) const;
     PayloadSpan payload(std::string_view name) const;
     std::size_t read_direct(std::uint64_t absolute_offset, std::span<std::byte> destination) const;

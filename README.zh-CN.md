@@ -1,5 +1,12 @@
 # KVMem NInfer · Windows V100 · Swift-1.5
 
+## KVMem 与原生 GGUF 量化支持
+
+本项目重点是 KVMem 历史归档/检索和 V100 上的量化推理：历史保存在主机内存，选取页面进入有限的 GPU 窗口。262144 是逻辑上下文上限，32768 是 GPU 工作窗口，不等于对全部历史进行完整注意力计算。
+
+**本地已实现 Qwen/Swift dense 27B 原生 GGUF 加载**：保留 K/IQ 量化块，直接使用 NInfer CUDA 引擎，无需先转换整个模型文件。[支持范围与启动方法](docs/maintainer/native-gguf-loading.md)。原生路径支持文本、内嵌 MTP、优化草稿头；搭配同模型 mmproj GGUF 可启用图片/视频。分词器和模板直接从模型读取，不需要伴随资源文件。不能加载任意架构的 GGUF。
+
+
 在 Tesla V100 16GB 上运行 Swift-1.5 Qwen3.8-27B：KVMem 长上下文、MTP 投机、图片输入和 OpenAI 兼容 API。
 
 **[安装、模型下载、构建与启动 →](docs/windows/SWIFT-KVMEM.md)**

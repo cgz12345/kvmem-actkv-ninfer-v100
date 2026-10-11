@@ -27,6 +27,9 @@ ServeOptions parse(std::vector<std::string> arguments) {
 
 int main() {
     int failures = 0;
+    const auto native_vision = parse({"ninfer-serve", "model.gguf", "--vision", "--mmproj", "projector.gguf"});
+    failures += check(native_vision.enable_vision && native_vision.mmproj_path == "projector.gguf",
+                      "native GGUF projector option mismatch");
 
     const ServeOptions defaults = parse({"ninfer-serve", "model.ninfer"});
     failures += check(defaults.allow_prefix_reuse, "prefix reuse is not enabled by default");

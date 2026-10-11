@@ -1,6 +1,6 @@
 # NInfer CLI
 
-`build/apps/ninfer` runs one request against one registered `.ninfer` artifact. Build NInfer and
+`build/apps/ninfer` runs one request against one registered `.ninfer` artifact or supported native Qwen/Swift dense 27B `.gguf` model. Native GGUF text/MTP requires matching embedded frontend metadata; see [native GGUF loading](maintainer/native-gguf-loading.md). Build NInfer and
 download an artifact using the [project README](../README.md) before following this guide.
 
 The examples use Qwen3.8-27B NVFP4 with FP8 KV storage.

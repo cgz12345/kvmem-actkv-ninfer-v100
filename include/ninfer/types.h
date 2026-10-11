@@ -183,6 +183,7 @@ struct KvmemOptions {
 
 struct EngineOptions {
     std::filesystem::path artifact_path;
+    std::filesystem::path mmproj_path;
     EnginePurpose purpose              = EnginePurpose::Generation;
     int device                         = 0;
     std::uint32_t max_context          = 2048; // Logical ceiling of one request or score window.

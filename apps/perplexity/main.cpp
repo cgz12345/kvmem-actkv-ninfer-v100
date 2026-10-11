@@ -53,7 +53,7 @@ struct Options {
 };
 
 std::string usage_text() {
-    return "usage: ninfer-perplexity <model.ninfer> "
+    return "usage: ninfer-perplexity <model.ninfer|model.gguf> "
            "(--corpus <manifest.json> [--quick] | --text <utf8-file>)\n"
            "       [--context N] [--stride N] [--device N]\n"
            "       [--kv-dtype bf16|int8|fp8|nvfp4|k8v4] [--output <directory>]\n"

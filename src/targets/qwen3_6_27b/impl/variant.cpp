@@ -276,6 +276,13 @@ void Variant::mtp_attention_projection(const Tensor& hidden,
                                        const MtpAttentionProjectionWeights& weights, Tensor& query,
                                        Tensor& gate, Tensor& key, Tensor& value,
                                        WorkspaceArena& workspace, cudaStream_t stream) {
+    if (weights.split_projection) {
+        ops::linear(hidden, weights.query, query, stream);
+        ops::linear(hidden, weights.output_gate, gate, stream);
+        ops::linear(hidden, weights.key, key, stream);
+        ops::linear(hidden, weights.value, value, stream);
+        return;
+    }
     auto scope     = workspace.scope();
     const int cols = hidden.ne[1];
     Tensor packed  = workspace.alloc(DType::BF16, {TextConfig::mtp_attention_input_rows, cols});
@@ -433,12 +440,21 @@ void Variant::mtp_post_mixer(const Tensor& hidden, const MtpPostMixerWeights& we
                              Tensor& residual, WorkspaceArena& workspace, cudaStream_t stream) {
     auto scope     = workspace.scope();
     const int cols = hidden.ne[1];
-    Tensor gate_up = workspace.alloc(DType::BF16, {TextConfig::mtp_mlp_gate_up_rows, cols});
-    ops::linear(hidden, weights.gate_up, gate_up, stream);
+    Tensor gate, up;
+    if (weights.up) {
+        // Each linear output must be contiguous, including multi-token graph profiles.
+        gate = workspace.alloc(DType::BF16, {TextConfig::intermediate, cols});
+        up   = workspace.alloc(DType::BF16, {TextConfig::intermediate, cols});
+        ops::linear(hidden, weights.gate_up, gate, stream);
+        ops::linear(hidden, *weights.up, up, stream);
+    } else {
+        Tensor gate_up = workspace.alloc(DType::BF16, {TextConfig::mtp_mlp_gate_up_rows, cols});
+        ops::linear(hidden, weights.gate_up, gate_up, stream);
+        gate = gate_up.slice(0, 0, TextConfig::intermediate);
+        up   = gate_up.slice(0, TextConfig::intermediate, TextConfig::intermediate);
+    }
     Tensor activation = workspace.alloc(DType::BF16, {TextConfig::intermediate, cols});
-    ops::silu_mul(gate_up.slice(0, 0, TextConfig::intermediate),
-                  gate_up.slice(0, TextConfig::intermediate, TextConfig::intermediate), activation,
-                  stream);
+    ops::silu_mul(gate, up, activation, stream);
     Tensor delta = workspace.alloc(DType::BF16, {TextConfig::hidden, cols});
     ops::linear(activation, weights.down, delta, stream);
     ops::residual_add(delta, residual, stream);

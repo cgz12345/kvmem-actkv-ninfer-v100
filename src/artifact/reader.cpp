@@ -1,4 +1,5 @@
 #include "artifact/reader.h"
+#include "artifact/gguf_qwen_source.h"
 
 #include <nlohmann/json.hpp>
 
@@ -363,10 +364,27 @@ constexpr std::array<FusedFamily, 7> kFusedFamilies = {{
 }};
 
 struct Reader::Impl {
-    explicit Impl(const std::filesystem::path& path) : file(path) {
+    explicit Impl(const std::filesystem::path& path, const std::filesystem::path& mmproj) : file(path) {
         if (file.size() < 16) {
             throw ArtifactError("artifact is shorter than the minimum header");
         }
+        if (std::memcmp(file.data(), "GGUF", 4) == 0) {
+            gguf = std::make_unique<GgufQwenSource>(
+                std::span<const std::byte>(file.data(), file.size()), path);
+            if (!mmproj.empty()) {
+                projector = std::make_unique<MappedFile>(mmproj);
+                gguf->add_vision({projector->data(), projector->size()});
+            }
+            identity = {"qwen3.8-27b", "gguf"};
+            provenance_recipe = "qwen3_8_27b_gguf_direct";
+            entries = gguf->objects;
+            for (std::size_t i=0; i<entries.size(); ++i)
+                index.emplace(std::string(object_name(entries[i])), i);
+            for (const auto& [alias, name] : gguf->aliases)
+                logical_index.emplace(alias, index.at(name));
+            return;
+        }
+        if (!mmproj.empty()) throw ArtifactError("--mmproj requires a native GGUF model");
         const bool is_v3 = std::equal(kMagicV3.begin(), kMagicV3.end(), file.data());
         const bool is_v2 = !is_v3 && std::equal(kMagicV2.begin(), kMagicV2.end(), file.data());
         if (!is_v2 && !is_v3) {
@@ -840,6 +858,8 @@ struct Reader::Impl {
     }
 
     MappedFile file;
+    std::unique_ptr<MappedFile> projector;
+    std::unique_ptr<GgufQwenSource> gguf;
     ArtifactIdentity identity;
     std::string provenance_recipe;
     std::vector<ObjectDescriptor> entries;
@@ -852,7 +872,8 @@ struct Reader::Impl {
     std::uint64_t payload_start = 0;
 };
 
-Reader::Reader(const std::filesystem::path& path) : impl_(std::make_unique<Impl>(path)) {}
+Reader::Reader(const std::filesystem::path& path, const std::filesystem::path& mmproj)
+    : impl_(std::make_unique<Impl>(path, mmproj)) {}
 
 Reader::~Reader()                            = default;
 Reader::Reader(Reader&&) noexcept            = default;
@@ -872,11 +893,18 @@ const ObjectDescriptor* Reader::find(std::string_view name) const noexcept {
                                                  : &impl_->entries[logical->second];
 }
 
-std::uint64_t Reader::file_bytes() const noexcept { return impl_->file.size(); }
+bool Reader::is_native_gguf() const noexcept { return bool(impl_->gguf); }
+std::uint64_t Reader::absolute_offset(const ObjectDescriptor& object) const {
+    return checked_add(impl_->payload_start, object_offset(object), "absolute payload offset");
+}
+std::uint64_t Reader::file_bytes() const noexcept {
+    return impl_->file.size();
+}
 
 std::uint64_t Reader::payload_offset() const noexcept { return impl_->payload_start; }
 
 PayloadSpan Reader::payload(const ObjectDescriptor& object) const {
+    if (impl_->gguf) return {object_offset(object), impl_->gguf->payload(object)};
     const auto absolute =
         checked_add(impl_->payload_start, object_offset(object), "absolute payload offset");
     const auto end = checked_add(absolute, object_bytes(object), "absolute payload range");
@@ -896,6 +924,7 @@ PayloadSpan Reader::payload(std::string_view name) const {
 
 std::size_t Reader::read_direct(std::uint64_t absolute_offset,
                                 std::span<std::byte> destination) const {
+    if (impl_->gguf) return impl_->gguf->read(absolute_offset, destination);
     return impl_->file.read_direct(absolute_offset, destination);
 }
 

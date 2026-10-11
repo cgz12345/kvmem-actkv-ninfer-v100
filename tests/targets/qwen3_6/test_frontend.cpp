@@ -1706,6 +1706,25 @@ int test_structured_tool_output() {
                               !arguments.contains("enabled") && arguments.at("count") == "many",
                           "frontend did not preserve normalized tool arguments");
     }
+    const std::string malformed = "<tool_call><function=TaskUpdate>\n"
+        "<parameter=taskId>1\n<parameter=count>2";
+    for (bool eos : {false, true}) {
+        auto recovery_session = frontend.make_output_session(prompt, {});
+        auto recovery_tokens = fixture_tokenizer().encode(malformed);
+        if (eos) { recovery_tokens.push_back(6); }
+        const auto recovered = recovery_session.preview_model(recovery_tokens,
+            static_cast<std::uint32_t>(recovery_tokens.size()), ninfer::FinishReason::OutputLimit);
+        const auto published = recovery_session.commit_preview();
+        const auto recovery_calls = recovery_session.take_tool_calls();
+        failures += check(recovered.finish_reason == (eos ? ninfer::FinishReason::StopToken
+                                                        : ninfer::FinishReason::OutputLimit),
+                          "recovery lost the engine terminal reason");
+        failures += check(eos ? recovery_calls.size() == 1 &&
+                                channel_text(published, ninfer::OutputChannel::Content).empty()
+                              : recovery_calls.empty() &&
+                                channel_text(published, ninfer::OutputChannel::Content) == malformed,
+                          "frontend did not gate missing-closer recovery on natural EOS");
+    }
     return failures;
 }
 

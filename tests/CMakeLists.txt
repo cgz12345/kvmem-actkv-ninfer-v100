@@ -51,6 +51,20 @@ function(ninfer_add_fused_linear_test name source common)
     LIBRARIES ninfer_ops)
 endfunction()
 
+# GGUF directory parsing needs no GPU and runs on CPU-only test hosts.
+add_executable(ninfer_gguf_directory_test test_gguf_directory.cpp)
+target_include_directories(ninfer_gguf_directory_test PRIVATE
+  ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/third_party)
+add_test(NAME ninfer_gguf_directory_test COMMAND ninfer_gguf_directory_test)
+
+# Opt-in comparison against a real GGUF and a matching .ninfer conversion.
+# Not a default CTest: it requires explicitly supplied multi-GB model fixtures.
+add_executable(ninfer_native_gguf_qwen_check test_native_gguf_qwen.cpp)
+target_include_directories(ninfer_native_gguf_qwen_check PRIVATE
+  ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/include ${PROJECT_SOURCE_DIR}/third_party
+  ${PROJECT_SOURCE_DIR}/src/targets/qwen3_6/export)
+target_link_libraries(ninfer_native_gguf_qwen_check PRIVATE ninfer_artifact ninfer_engine)
+
 # Artifact framing and model-independent runtime contracts.
 ninfer_add_test(ninfer_artifact_reader_test
   SOURCES test_ninfer_artifact_reader.cpp

@@ -29,12 +29,12 @@ approval requirements beyond the user's instructions and the actual execution en
 
 NInfer is a from-scratch C++/CUDA inference engine for maximum single-GPU performance on explicitly
 registered artifacts. Current identities are `qwen3.6-27b/groupwise-int`, `qwen3.6-27b/nvfp4`,
-`qwen3.8-27b/groupwise-int`, `qwen3.8-27b/nvfp4`, and `qwen3.6-35b-a3b/groupwise-int`.
+`qwen3.8-27b/groupwise-int`, `qwen3.8-27b/nvfp4`, `qwen3.8-27b/gguf`, and `qwen3.6-35b-a3b/groupwise-int`.
 The implementation targets `sm_120a` and is tuned on NVIDIA GeForce RTX 5090.
 
 Generation uses one GPU, one resident model, startup-fixed concurrency of one to eight requests,
 bounded FIFO ingress, no active-request preemption, and one compact decode batch per round.
-Generation and offline CausalScoring use the same public `.ninfer` Engine route. Delivered
+Generation and offline CausalScoring use the public Engine route. Supported native Qwen/Swift dense 27B GGUF models also use this route; exact text/MTP/proposal/vision scope is documented in docs/maintainer/native-gguf-loading.md. Delivered
 capabilities and commands are documented in `README.md`, the product guides, and executable
 `--help`. Additional models, execution platforms, large-scale/preemptive continuous batching, and
 priority/QoS require an explicit product change.
@@ -44,7 +44,7 @@ local workflow. Do not derive requirements from a different deployment or trust 
 
 Keep these ownership boundaries visible when selecting a design:
 
-- `.ninfer` is the only C++ product artifact; CLI, serving, and inference benchmarks use the public
+- `.ninfer` and the explicitly supported native Qwen/Swift dense 27B `.gguf` models are C++ product artifacts; CLI, serving, and inference benchmarks use the public
   Engine. NInfer has no Python model-inference route or installed/exported C++ SDK.
 - Core owns physical primitives and raw transfers; artifact owns generic framing and
   materialization; Ops own closed mathematical and state-transition implementations.

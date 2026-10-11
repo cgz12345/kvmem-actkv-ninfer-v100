@@ -77,7 +77,7 @@ ReasoningEffort parse_reasoning_effort(std::string_view text) {
 
 std::string usage_text(const char* argv0) {
     return std::string("usage: ") + argv0 +
-           " <model.ninfer> (--prompt <text>|--messages <messages.json>)\n"
+           " <model.ninfer|model.gguf> (--prompt <text>|--messages <messages.json>)\n"
            "       [--max-context N] [--kv-capacity N|auto] [--prefill-chunk N] [--max-new N]\n"
            "       [--device N]\n"
            "       [--kv-dtype bf16|int8|fp8|nvfp4|k8v4] [--spec mtp|dflash|dflash2 --draft-tokens "
@@ -87,7 +87,7 @@ std::string usage_text(const char* argv0) {
            "       [--presence-penalty F] [--frequency-penalty F] [--seed N] [--greedy]\n"
            "       [--stop-token-id N]... [--stop <text>]... [--reasoning-stop <text>]...\n"
            "       [--raw-output] [--print-token-ids] [--no-thinking] [--thinking-budget N]\n"
-           "       [--reasoning-effort low|medium|xhigh] [--vision]\n"
+           "       [--reasoning-effort low|medium|xhigh] [--vision] [--mmproj projector.gguf]\n"
            "       [--no-cuda-graph]\n"
            "       [--log-level trace|debug|info|warning|error|critical|off]\n"
            "\n"
@@ -110,7 +110,7 @@ Options parse_options(int argc, char** argv) {
         options.help_requested = true;
         return options;
     }
-    if (argc < 2) { throw std::invalid_argument(".ninfer model path is required"); }
+    if (argc < 2) { throw std::invalid_argument("model path (.ninfer or supported .gguf) is required"); }
     options.artifact_path     = argv[1];
     bool kv_capacity_explicit = false;
 
@@ -154,6 +154,8 @@ Options parse_options(int argc, char** argv) {
             options.thinking_budget = parse_u32(value(arg), "thinking-budget");
         } else if (arg == "--reasoning-effort") {
             options.reasoning_effort = parse_reasoning_effort(value(arg));
+        } else if (arg == "--mmproj") {
+            options.mmproj_path = value(arg);
         } else if (arg == "--vision") {
             options.enable_vision = true;
         } else if (arg == "--no-cuda-graph") {

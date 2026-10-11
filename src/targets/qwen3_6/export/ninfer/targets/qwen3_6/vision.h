@@ -29,6 +29,10 @@ struct VisionBackboneConfig {
 };
 
 struct VisionLayerPlan {
+    artifact::NumericFormat qkv_format = artifact::NumericFormat::Q4G64_F16S;
+    artifact::NumericFormat output_format = artifact::NumericFormat::Q5G64_F16S;
+    artifact::NumericFormat fc1_format = artifact::NumericFormat::Q4G64_F16S;
+    artifact::NumericFormat fc2_format = artifact::NumericFormat::Q5G64_F16S;
     artifact::ObjectHandle qkv;
     artifact::ObjectHandle qkv_bias;
     artifact::ObjectHandle output;
@@ -44,6 +48,7 @@ struct VisionLayerPlan {
 };
 
 struct VisionBackbonePlan {
+    artifact::NumericFormat patch_format = artifact::NumericFormat::Q6G64_F16S;
     artifact::ObjectHandle patch_embedding;
     artifact::ObjectHandle patch_embedding_bias;
     artifact::ObjectHandle position_embedding;
@@ -51,6 +56,7 @@ struct VisionBackbonePlan {
 };
 
 struct VisionMergerInputPlan {
+    artifact::NumericFormat fc1_format = artifact::NumericFormat::W8G32_F16S;
     artifact::ObjectHandle fc1;
     artifact::ObjectHandle fc1_bias;
 };

@@ -731,6 +731,44 @@ int test_incremental_fallback_preserves_bytes() {
     return failures;
 }
 
+int test_natural_stop_missing_closers() {
+    auto contract = output_contract_for("Bash", Json{
+        {"command", Json{{"type", "string"}}},
+        {"description", Json{{"type", "string"}}}});
+    const std::string command = "echo \"test\" && curl -sI \"https://example.com/\"";
+    const std::string text = "<tool_call> <function=Bash>\n<parameter=command>" + command +
+        "\n<parameter=description>Verify URL";
+    int failures = 0;
+    for (bool natural_stop : {false, true}) {
+        fi::ToolCallOutputDecoder decoder(contract, 128);
+        std::string visible;
+        for (char byte : text) { visible += decoder.feed(std::string_view(&byte, 1)); }
+        auto terminal = decoder.finish(natural_stop);
+        if (!natural_stop) {
+            failures += check(terminal.tool_calls.empty() && visible + terminal.content == text,
+                "length-truncated missing closers must remain text");
+        } else {
+            failures += check(terminal.tool_calls.size() == 1 && terminal.content.empty(),
+                "natural stop with declared sibling parameters was not recovered");
+            if (terminal.tool_calls.size() == 1) {
+                const auto args = Json::parse(terminal.tool_calls.front().arguments_json);
+                failures += check(args.at("command") == command &&
+                    args.at("description") == "Verify URL", "recovery changed argument bytes");
+            }
+        }
+    }
+    for (const std::string suffix : {
+             "<parameter=description>inline", "\n<parameter=unknown>unknown",
+             "\n<parameter=command>duplicate", "\n<parameter=description>"}) {
+        const auto parsed = fi::parse_qwen_tool_call_output(
+            "<tool_call><function=Bash><parameter=command>echo test" + suffix,
+            128, *contract, true);
+        failures += check(!parsed.is_tool_call_response,
+            "ambiguous, duplicate, unknown or empty terminal parameter was recovered");
+    }
+    return failures;
+}
+
 int test_incremental_embedded_parameter_markup() {
     auto contract = output_contract_for("bash", Json{{"command", Json{{"type", "string"}}}});
     const std::string command = "pattern='<parameter=inner>value</parameter>'\n"
@@ -780,6 +818,7 @@ int main() {
     failures += test_incremental_valid_and_boolean();
     failures += test_incremental_fallback_preserves_bytes();
     failures += test_incremental_embedded_parameter_markup();
+    failures += test_natural_stop_missing_closers();
     if (failures == 0) { std::cout << "ok\n"; }
     return failures == 0 ? 0 : 1;
 }

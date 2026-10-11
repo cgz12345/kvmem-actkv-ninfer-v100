@@ -9,6 +9,16 @@
 namespace ninfer::ops::detail {
 
 Bf16Launch select_bf16_a16_launch(std::int32_t n, std::int32_t k, std::int32_t t) {
+    const bool vision_patches = (n == 1152 && k == 1536) || (n == 3456 && k == 1152) ||
+                                (n == 1152 && k == 1152) || (n == 4304 && k == 1152) ||
+                                (n == 1152 && k == 4304);
+    const bool vision_merged = (n == 4608 && k == 4608) || (n == 5120 && k == 4608);
+    if (vision_patches || vision_merged) {
+        if (t <= 0 || (vision_patches && (t % 4 != 0 || t > 131072)) ||
+            (vision_merged && t > 32768))
+            throw std::invalid_argument("bf16 linear: invalid vision column extent");
+        return launch_bf16_cutlass_sm70;
+    }
     const bool n256_k5120 = n == 256 && k == 5120;
     const bool supported_problem =
         (n == 14336 && k == 5120) || (n == 5120 && k == 6144) || n256_k5120;

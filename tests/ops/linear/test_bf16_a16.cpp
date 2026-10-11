@@ -234,6 +234,21 @@ int run_selector_linear() {
     return failures;
 }
 
+int run_bf16_vision() {
+    int failures = 0;
+    for (const auto& [n, k] : std::vector<std::pair<int, int>>{
+             {1152,1536}, {3456,1152}, {1152,1152}, {4304,1152}, {1152,4304},
+             {4608,4608}, {5120,4608}}) {
+        DeviceWeight weight(make_patterned(n, k, 431U));
+        const bool merged = k == 4608;
+        for (int tokens : merged ? std::vector<int>{1,3,128,129,512} :
+                                   std::vector<int>{4,8,64,132,512})
+            failures += run_bf16_linear_case(weight, tokens);
+        failures += weight.verify_preserved("BF16 vision weight");
+    }
+    return failures;
+}
+
 int run_bf16_linear() {
     int failures = 0;
     DeviceWeight attention_weight(make_patterned(14336, 5120, 401U));
@@ -250,14 +265,15 @@ int run_bf16_linear() {
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
     if (ninfer::test::cuda_unavailable()) {
         std::cout << "SKIP: no usable CUDA device\n";
         return 77;
     }
 
     try {
-        const int failures = run_bf16_linear();
+        const int failures = argc == 2 && std::string_view(argv[1]) == "--vision"
+                                 ? run_bf16_vision() : run_bf16_linear() + run_bf16_vision();
         std::cout << (failures == 0 ? "OK" : "FAIL") << " BF16_A16 Linear\n";
         return failures == 0 ? 0 : 1;
     } catch (const std::exception& error) {

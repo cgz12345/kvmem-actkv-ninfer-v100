@@ -410,8 +410,9 @@ NormalizedParameter normalize_parameter(std::string_view encoded_value,
 class QwenToolRegionParser {
 public:
     QwenToolRegionParser(std::string_view text, std::size_t max_name_length,
-                         const Contract& contract)
-        : text_(text), max_name_length_(max_name_length), contract_(contract) {}
+                         const Contract& contract, bool natural_stop)
+        : text_(text), max_name_length_(max_name_length), contract_(contract),
+          natural_stop_(natural_stop) {}
 
     FallbackReason parse(std::vector<RawToolCall>& calls) const {
         std::size_t pos = 0;
@@ -445,7 +446,9 @@ private:
         const FallbackReason failure = parse_function(pos, call);
         if (failure != FallbackReason::None) { return failure; }
         skip_format_whitespace(text_, pos);
-        return consume(pos, kToolClose) ? FallbackReason::None : FallbackReason::MalformedStructure;
+        return consume(pos, kToolClose) || (natural_stop_ && pos == text_.size() &&
+                                             !call.parameters.empty())
+                   ? FallbackReason::None : FallbackReason::MalformedStructure;
     }
 
     FallbackReason parse_function(std::size_t& pos, RawToolCall& call) const {
@@ -469,6 +472,9 @@ private:
             skip_format_whitespace(text_, pos);
             if (consume(pos, kFunctionClose)) { return FallbackReason::None; }
             if (starts_with_at(text_, pos, kToolClose)) { return FallbackReason::None; }
+            if (natural_stop_ && pos == text_.size() && !call.parameters.empty()) {
+                return FallbackReason::None;
+            }
             const FallbackReason failure = parse_parameter(pos, call);
             if (failure != FallbackReason::None) { return failure; }
         }
@@ -495,20 +501,43 @@ private:
             // Tolerate a missing </parameter>: models occasionally drop the parameter
             // and function closes and jump straight to </tool_call>. The value then
             // ends at the earliest surviving closer, which the caller consumes. A
-            // nested unbalanced <parameter= open stays rejected: the value boundary
-            // would be ambiguous.
+            // A declared sibling on its own line can supply the missing boundary.
+            // End-of-output recovery is allowed only after a natural model stop.
             const std::size_t function_close = text_.find(kFunctionClose, value_begin);
             const std::size_t tool_close     = text_.find(kToolClose, value_begin);
-            if (function_close == std::string_view::npos &&
-                tool_close == std::string_view::npos) {
-                return FallbackReason::MalformedStructure;
-            }
             value_end = function_close == std::string_view::npos ? tool_close
                         : tool_close == std::string_view::npos   ? function_close
                                                                  : std::min(function_close,
                                                                             tool_close);
+            if (value_end == std::string_view::npos) {
+                if (!natural_stop_) { return FallbackReason::MalformedStructure; }
+                value_end = text_.size();
+            }
+            const Contract::Tool* tool = find_tool_contract(contract_, call.name);
+            const Contract::Parameter* parameter = tool && tool->unambiguous
+                ? find_parameter_contract(*tool, name) : nullptr;
             std::size_t nested_open_end = 0;
             if (find_parameter_open_before(value_begin, value_end, nested_open_end)) {
+                const std::size_t sibling = text_.find(kParamOpen, value_begin);
+                const auto sibling_name = text_.substr(sibling + kParamOpen.size(),
+                    nested_open_end - 1 - sibling - kParamOpen.size());
+                // Only declared siblings on a fresh line can delimit a missing close.
+                // Embedded markup and unknown names remain ambiguous and are rejected.
+                const auto line = text_.rfind('\n', sibling);
+                if (!parameter || line == std::string_view::npos ||
+                    !trim_format_whitespace(text_.substr(line + 1, sibling - line - 1)).empty() ||
+                    !find_parameter_contract(*tool, sibling_name)) {
+                    return FallbackReason::MalformedStructure;
+                }
+                value_end = sibling;
+            } else if (value_end == text_.size() &&
+                       (!parameter || trim_format_whitespace(text_.substr(value_begin)).empty())) {
+                return FallbackReason::MalformedStructure;
+            }
+            if (value_end == text_.size() &&
+                (text_.find(kToolOpen, value_begin) != std::string_view::npos ||
+                 text_.find(kFunctionOpen, value_begin) != std::string_view::npos ||
+                 text_.find(kParamClose, value_begin) != std::string_view::npos)) {
                 return FallbackReason::MalformedStructure;
             }
             pos = value_end;
@@ -559,6 +588,7 @@ private:
     std::string_view text_;
     std::size_t max_name_length_;
     const Contract& contract_;
+    bool natural_stop_;
 };
 
 GeneratedToolCall normalize_raw_tool_call(const RawToolCall& raw, const Contract& contract,
@@ -618,7 +648,8 @@ build_tool_call_output_contract(std::span<const std::string> tool_jsons, bool en
 
 ParsedToolCallOutput parse_qwen_tool_call_output(const std::string& text,
                                                  std::size_t max_tool_name_length,
-                                                 const ToolCallOutputContract& contract) {
+                                                 const ToolCallOutputContract& contract,
+                                                 bool natural_stop) {
     const std::size_t first = text.find(kToolOpen);
     if (first == std::string::npos) { return fallback(text); }
 
@@ -628,7 +659,7 @@ ParsedToolCallOutput parse_qwen_tool_call_output(const std::string& text,
 
     std::vector<RawToolCall> raw_calls;
     const std::string_view tool_region = std::string_view(text).substr(first);
-    const QwenToolRegionParser parser(tool_region, max_tool_name_length, contract);
+    const QwenToolRegionParser parser(tool_region, max_tool_name_length, contract, natural_stop);
     const FallbackReason failure = parser.parse(raw_calls);
     if (failure != FallbackReason::None) {
         out.diagnostics.fallback_reason = failure;
@@ -694,13 +725,13 @@ std::string ToolCallOutputDecoder::feed(std::string_view text) {
     return visible;
 }
 
-ToolCallOutputDecoder::Terminal ToolCallOutputDecoder::finish() {
+ToolCallOutputDecoder::Terminal ToolCallOutputDecoder::finish(bool natural_stop) {
     if (finished_) { throw std::logic_error("tool-call output decoder is already finished"); }
     finished_ = true;
     if (!contract_) { return {}; }
 
     ParsedToolCallOutput parsed =
-        parse_qwen_tool_call_output(tool_region_, max_tool_name_length_, *contract_);
+        parse_qwen_tool_call_output(tool_region_, max_tool_name_length_, *contract_, natural_stop);
     if (saw_tool_marker_ && parsed.is_tool_call_response) {
         trailing_whitespace_.clear();
         tool_region_.clear();

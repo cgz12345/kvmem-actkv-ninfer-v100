@@ -40,6 +40,7 @@ struct MaterializationPlan {
 class Binder {
 public:
     explicit Binder(const Reader& reader);
+    [[nodiscard]] bool is_native_gguf() const noexcept { return reader_.is_native_gguf(); }
 
     ObjectHandle require_tensor(std::string_view name, NumericFormat format, StorageLayout layout,
                                 std::span<const std::uint64_t> shape);

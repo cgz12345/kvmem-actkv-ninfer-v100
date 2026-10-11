@@ -64,7 +64,7 @@ build_tool_call_output_contract(std::span<const std::string> tool_jsons, bool en
 
 [[nodiscard]] ParsedToolCallOutput
 parse_qwen_tool_call_output(const std::string& text, std::size_t max_tool_name_length,
-                            const ToolCallOutputContract& contract);
+                            const ToolCallOutputContract& contract, bool natural_stop = false);
 
 // Incrementally publishes bytes that are provably outside a possible terminal Qwen tool-call
 // suffix. At terminal time, valid calls are retained structurally; malformed output is restored
@@ -81,7 +81,7 @@ public:
                           std::size_t max_tool_name_length);
 
     [[nodiscard]] std::string feed(std::string_view text);
-    [[nodiscard]] Terminal finish();
+    [[nodiscard]] Terminal finish(bool natural_stop = false);
 
 private:
     std::shared_ptr<const ToolCallOutputContract> contract_;

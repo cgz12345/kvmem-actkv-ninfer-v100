@@ -833,6 +833,11 @@ ArtifactLoadPlan bind_artifact(artifact::Binder& binder, WeightsProfile weights_
     out.features     = features;
 
     const bool gguf_profile = weights_profile == WeightsProfile::Qwen38Gguf;
+    const bool native_gguf  = binder.is_native_gguf();
+    if (native_gguf && features.dflash2()) {
+        throw artifact::ArtifactError(
+            "Native GGUF does not support DFlash2 components");
+    }
     if (gguf_profile) {
         // The GGUF bundle stores the vocabulary endpoints in their own block formats; the
         // endpoint_format profiles (W8/FP8) do not apply.
@@ -867,86 +872,114 @@ ArtifactLoadPlan bind_artifact(artifact::Binder& binder, WeightsProfile weights_
     }
     out.final_norm =
         artifact::bind_device_tensor(binder, "text/final_norm", NumericFormat::BF16, {5120});
-    out.output_head =
-        gguf_profile ? bind_adaptive(binder, "text/output_head", {248320, 5120})
-                     : bind_weight(binder, "text/output_head", endpoint_format(weights_profile),
-                                   {248320, 5120});
-    const artifact::TensorPlacement proposal_placement =
-        features.optimized_proposal() ? artifact::TensorPlacement::Device
-                                      : artifact::TensorPlacement::ValidateOnly;
-    // The GGUF bundle names the indexed proposal head "proposal/head" / "proposal/token_ids".
-    const std::string_view draft_head_name =
-        gguf_profile ? std::string_view("proposal/head") : std::string_view("text/draft_head");
-    const std::string_view draft_ids_name =
-        gguf_profile ? std::string_view("proposal/token_ids")
-                     : std::string_view("text/draft_head_token_ids");
-    if (gguf_profile) {
-        out.draft_head           = bind_adaptive(binder, draft_head_name, {131072, 5120},
-                                                 proposal_placement);
-        out.draft_head_token_ids = bind_adaptive(binder, draft_ids_name, {131072},
-                                                 proposal_placement);
-    } else {
-        out.draft_head = WeightPlan{
-            .object = artifact::bind_tensor(binder, draft_head_name, NumericFormat::Q4G64_F16S,
-                                             {131072, 5120}, proposal_placement),
-            .format = NumericFormat::Q4G64_F16S};
-        out.draft_head_token_ids = WeightPlan{
-            .object = artifact::bind_tensor(binder, draft_ids_name, NumericFormat::I32, {131072},
-                                            proposal_placement),
-            .format = NumericFormat::I32};
+    out.output_head = gguf_profile ? bind_adaptive(binder, "text/output_head", {248320, 5120})
+                                   : bind_weight(binder, "text/output_head",
+                                                 endpoint_format(weights_profile), {248320, 5120});
+    {
+        const artifact::TensorPlacement proposal_placement =
+            features.optimized_proposal() ? artifact::TensorPlacement::Device
+                                          : artifact::TensorPlacement::ValidateOnly;
+        // The GGUF bundle names the indexed proposal head "proposal/head" / "proposal/token_ids".
+        const std::string_view draft_head_name =
+            gguf_profile ? std::string_view("proposal/head") : std::string_view("text/draft_head");
+        const std::string_view draft_ids_name = gguf_profile
+                                                    ? std::string_view("proposal/token_ids")
+                                                    : std::string_view("text/draft_head_token_ids");
+        if (gguf_profile) {
+            out.draft_head =
+                bind_adaptive(binder, draft_head_name, {131072, 5120}, proposal_placement);
+            out.draft_head_token_ids =
+                bind_adaptive(binder, draft_ids_name, {131072}, proposal_placement);
+        } else {
+            out.draft_head = WeightPlan{
+                .object = artifact::bind_tensor(binder, draft_head_name, NumericFormat::Q4G64_F16S,
+                                                {131072, 5120}, proposal_placement),
+                .format = NumericFormat::Q4G64_F16S};
+            out.draft_head_token_ids = WeightPlan{
+                .object = artifact::bind_tensor(binder, draft_ids_name, NumericFormat::I32,
+                                                {131072}, proposal_placement),
+                .format = NumericFormat::I32};
+        }
+        validate_draft_ids(binder, out.draft_head_token_ids.object);
     }
-    validate_draft_ids(binder, out.draft_head_token_ids.object);
+
+    if (!native_gguf || binder.contains("mtp/input_projection") || features.mtp()) {
+        if (native_gguf && !binder.contains("mtp/input_projection")) {
+            throw artifact::ArtifactError(
+                "MTP was selected but this GGUF has no embedded MTP layer");
+        }
 
 
-    const artifact::TensorPlacement mtp_placement = features.mtp()
-                                                        ? artifact::TensorPlacement::Device
-                                                        : artifact::TensorPlacement::ValidateOnly;
-    const auto bind_mtp_handle                    = [&](std::string_view name, NumericFormat format,
-                                        std::initializer_list<std::uint64_t> shape) {
-        return artifact::bind_tensor(binder, name, format, shape, mtp_placement);
-    };
-    // The GGUF bundle keys its single MTP layer as "mtp/layers/0/...".
-    const std::string mtp_layer = gguf_profile ? "mtp/layers/0/" : "mtp/layer/";
-    const auto bind_mtp_weight                    = [&](std::string_view name,
-                                       NumericFormat native_format,
-                                       std::initializer_list<std::uint64_t> shape) {
-        return gguf_profile ? bind_adaptive(binder, name, shape, mtp_placement)
-                            : WeightPlan{
-                                  .object = bind_mtp_handle(name, native_format, shape),
-                                  .format = native_format};
-    };
-    out.mtp.input_projection =
-        bind_mtp_weight("mtp/input_projection", NumericFormat::W8G32_F16S, {5120, 10240});
-    out.mtp.embedding_norm = bind_mtp_handle("mtp/embedding_norm", NumericFormat::BF16, {5120});
-    out.mtp.hidden_norm    = bind_mtp_handle("mtp/hidden_norm", NumericFormat::BF16, {5120});
-    out.mtp.input_norm = bind_mtp_handle(mtp_layer + "input_norm", NumericFormat::BF16, {5120});
-    out.mtp.query_key_gate_value =
-        bind_mtp_weight(mtp_layer + "attention/query_key_gate_value", NumericFormat::W8G32_F16S,
-                        {14336, 5120});
-    out.mtp.query_norm =
-        bind_mtp_handle(mtp_layer + "attention/query_norm", NumericFormat::BF16, {256});
-    out.mtp.key_norm =
-        bind_mtp_handle(mtp_layer + "attention/key_norm", NumericFormat::BF16, {256});
-    out.mtp.output = bind_mtp_weight(mtp_layer + "attention/output", NumericFormat::W8G32_F16S,
-                                     {5120, 6144});
-    out.mtp.post_attention_norm =
-        bind_mtp_handle(mtp_layer + "post_attention_norm", NumericFormat::BF16, {5120});
-    out.mtp.mlp.gate_up = bind_mtp_weight(mtp_layer + "mlp/gate_up", NumericFormat::W8G32_F16S,
-                                          {34816, 5120});
-    out.mtp.mlp.down = bind_mtp_weight(mtp_layer + "mlp/down", NumericFormat::W8G32_F16S,
-                                        {5120, 17408});
-    out.mtp.final_norm = bind_mtp_handle("mtp/final_norm", NumericFormat::BF16, {5120});
+        const artifact::TensorPlacement mtp_placement =
+            features.mtp() ? artifact::TensorPlacement::Device
+                           : artifact::TensorPlacement::ValidateOnly;
+        const auto bind_mtp_handle = [&](std::string_view name, NumericFormat format,
+                                         std::initializer_list<std::uint64_t> shape) {
+            return artifact::bind_tensor(binder, name, format, shape, mtp_placement);
+        };
+        // The GGUF bundle keys its single MTP layer as "mtp/layers/0/...".
+        const std::string mtp_layer = gguf_profile ? "mtp/layers/0/" : "mtp/layer/";
+        const auto bind_mtp_weight  = [&](std::string_view name, NumericFormat native_format,
+                                         std::initializer_list<std::uint64_t> shape) {
+            return gguf_profile ? bind_adaptive(binder, name, shape, mtp_placement)
+                                 : WeightPlan{.object = bind_mtp_handle(name, native_format, shape),
+                                              .format = native_format};
+        };
+        out.mtp.input_projection =
+            bind_mtp_weight("mtp/input_projection", NumericFormat::W8G32_F16S, {5120, 10240});
+        out.mtp.embedding_norm = bind_mtp_handle("mtp/embedding_norm", NumericFormat::BF16, {5120});
+        out.mtp.hidden_norm    = bind_mtp_handle("mtp/hidden_norm", NumericFormat::BF16, {5120});
+        out.mtp.input_norm = bind_mtp_handle(mtp_layer + "input_norm", NumericFormat::BF16, {5120});
+        if (native_gguf) {
+            out.mtp.split_projection =
+                std::array<WeightPlan, 3>{bind_mtp_weight(mtp_layer + "attention/query",
+                                                          NumericFormat::W8G32_F16S, {12288, 5120}),
+                                          bind_mtp_weight(mtp_layer + "attention/key",
+                                                          NumericFormat::W8G32_F16S, {1024, 5120}),
+                                          bind_mtp_weight(mtp_layer + "attention/value",
+                                                          NumericFormat::W8G32_F16S, {1024, 5120})};
+        } else {
+            out.mtp.query_key_gate_value =
+                bind_mtp_weight(mtp_layer + "attention/query_key_gate_value",
+                                NumericFormat::W8G32_F16S, {14336, 5120});
+        }
+        out.mtp.query_norm =
+            bind_mtp_handle(mtp_layer + "attention/query_norm", NumericFormat::BF16, {256});
+        out.mtp.key_norm =
+            bind_mtp_handle(mtp_layer + "attention/key_norm", NumericFormat::BF16, {256});
+        out.mtp.output = bind_mtp_weight(mtp_layer + "attention/output", NumericFormat::W8G32_F16S,
+                                         {5120, 6144});
+        out.mtp.post_attention_norm =
+            bind_mtp_handle(mtp_layer + "post_attention_norm", NumericFormat::BF16, {5120});
+        if (native_gguf) {
+            out.mtp.mlp.gate_up =
+                bind_mtp_weight(mtp_layer + "mlp/gate", NumericFormat::W8G32_F16S, {17408, 5120});
+            out.mtp.mlp.up =
+                bind_mtp_weight(mtp_layer + "mlp/up", NumericFormat::W8G32_F16S, {17408, 5120});
+        } else {
+            out.mtp.mlp.gate_up = bind_mtp_weight(mtp_layer + "mlp/gate_up",
+                                                  NumericFormat::W8G32_F16S, {34816, 5120});
+        }
+        out.mtp.mlp.down =
+            bind_mtp_weight(mtp_layer + "mlp/down", NumericFormat::W8G32_F16S, {5120, 17408});
+        out.mtp.final_norm = bind_mtp_handle("mtp/final_norm", NumericFormat::BF16, {5120});
+    }
 
-    const artifact::TensorPlacement vision_placement =
-        features.vision ? artifact::TensorPlacement::Device
-                        : artifact::TensorPlacement::ValidateOnly;
-    out.vision_backbone     = qwen3_6::bind_vision_backbone(binder, vision_placement);
-    out.vision_merger_input = qwen3_6::bind_vision_merger_input(binder, vision_placement);
-    out.vision_merger_fc2   = artifact::bind_tensor(
-        binder, "vision/merger/fc2", NumericFormat::W8G32_F16S, {5120, 4608}, vision_placement);
-    out.vision_merger_fc2_bias = artifact::bind_tensor(
-        binder, "vision/merger/fc2_bias", NumericFormat::BF16, {5120}, vision_placement);
-    out.vision_merger_norm = qwen3_6::bind_vision_merger_norm(binder, vision_placement);
+    if (!native_gguf || binder.contains("vision/patch_embedding") || features.vision) {
+        if (native_gguf && !binder.contains("vision/patch_embedding"))
+            throw artifact::ArtifactError("Native GGUF vision requires --mmproj projector.gguf");
+        if (native_gguf) out.vision_merger_fc2_format = NumericFormat::BF16;
+        const artifact::TensorPlacement vision_placement =
+            features.vision ? artifact::TensorPlacement::Device
+                            : artifact::TensorPlacement::ValidateOnly;
+        out.vision_backbone     = qwen3_6::bind_vision_backbone(binder, vision_placement);
+        out.vision_merger_input = qwen3_6::bind_vision_merger_input(binder, vision_placement);
+        out.vision_merger_fc2   = artifact::bind_tensor(
+            binder, "vision/merger/fc2", out.vision_merger_fc2_format, {5120, 4608}, vision_placement);
+        out.vision_merger_fc2_bias = artifact::bind_tensor(
+            binder, "vision/merger/fc2_bias", NumericFormat::BF16, {5120}, vision_placement);
+        out.vision_merger_norm = qwen3_6::bind_vision_merger_norm(binder, vision_placement);
+    }
 
     const bool has_dflash2 = binder.contains("dflash2/feature_projection");
     if (features.dflash2() && !has_dflash2) {
@@ -977,7 +1010,7 @@ LoadedModelData::LoadedModelData(BindingPlan plan, artifact::MaterializedArtifac
     auto& output_head     = runtime.output_head;
 
     token_embedding        = materialized_weight(backing, plan.token_embedding, 248320, 5120,
-                                                /*prepack_for_qpn=*/false);
+                                                 /*prepack_for_qpn=*/false);
     std::size_t full_index = 0;
     std::size_t gdn_index  = 0;
     for (std::size_t layer = 0; layer < kTextLayers; ++layer) {
@@ -1022,11 +1055,10 @@ LoadedModelData::LoadedModelData(BindingPlan plan, artifact::MaterializedArtifac
         artifact::materialized_tensor(backing, plan.final_norm, NumericFormat::BF16, {5120});
     output_head = materialized_weight(backing, plan.output_head, 248320, 5120);
     if (plan.features.optimized_proposal()) {
-        auto& proposal    = runtime.optimized_proposal.emplace();
-        proposal.head     = materialized_weight(backing, plan.draft_head, 131072, 5120);
-        proposal.token_ids = artifact::materialized_tensor(backing,
-                                                           plan.draft_head_token_ids.object,
-                                                           NumericFormat::I32, {131072});
+        auto& proposal     = runtime.optimized_proposal.emplace();
+        proposal.head      = materialized_weight(backing, plan.draft_head, 131072, 5120);
+        proposal.token_ids = artifact::materialized_tensor(
+            backing, plan.draft_head_token_ids.object, NumericFormat::I32, {131072});
     }
 
     if (plan.features.mtp()) {
@@ -1038,12 +1070,22 @@ LoadedModelData::LoadedModelData(BindingPlan plan, artifact::MaterializedArtifac
                                                              NumericFormat::BF16, {5120});
         mtp.input_norm       = artifact::materialized_tensor(backing, plan.mtp.input_norm,
                                                              NumericFormat::BF16, {5120});
-        mtp.attention.packed =
-            materialized_weight(backing, plan.mtp.query_key_gate_value, 14336, 5120);
-        mtp.attention.query       = row_view(mtp.attention.packed, 0, 6144);
-        mtp.attention.key         = row_view(mtp.attention.packed, 6144, 1024);
-        mtp.attention.output_gate = row_view(mtp.attention.packed, 7168, 6144);
-        mtp.attention.value       = row_view(mtp.attention.packed, 13312, 1024);
+        if (plan.mtp.split_projection) {
+            const auto& parts              = *plan.mtp.split_projection;
+            const auto query_gate          = materialized_weight(backing, parts[0], 12288, 5120);
+            mtp.attention.split_projection = true;
+            mtp.attention.query            = row_view(query_gate, 0, 6144);
+            mtp.attention.output_gate      = row_view(query_gate, 6144, 6144);
+            mtp.attention.key              = materialized_weight(backing, parts[1], 1024, 5120);
+            mtp.attention.value            = materialized_weight(backing, parts[2], 1024, 5120);
+        } else {
+            mtp.attention.packed =
+                materialized_weight(backing, plan.mtp.query_key_gate_value, 14336, 5120);
+            mtp.attention.query       = row_view(mtp.attention.packed, 0, 6144);
+            mtp.attention.key         = row_view(mtp.attention.packed, 6144, 1024);
+            mtp.attention.output_gate = row_view(mtp.attention.packed, 7168, 6144);
+            mtp.attention.value       = row_view(mtp.attention.packed, 13312, 1024);
+        }
         mtp.query_norm =
             artifact::materialized_tensor(backing, plan.mtp.query_norm, NumericFormat::BF16, {256});
         mtp.key_norm =
@@ -1112,7 +1154,7 @@ LoadedModelData::LoadedModelData(BindingPlan plan, artifact::MaterializedArtifac
         vision.common = qwen3_6::materialize_vision_common(
             backing, plan.vision_backbone, plan.vision_merger_input, plan.vision_merger_norm);
         vision.merger_fc2      = artifact::materialized_weight(backing, plan.vision_merger_fc2,
-                                                               NumericFormat::W8G32_F16S, 5120, 4608);
+                                                               plan.vision_merger_fc2_format, 5120, 4608);
         vision.merger_fc2_bias = artifact::materialized_tensor(backing, plan.vision_merger_fc2_bias,
                                                                NumericFormat::BF16, {5120});
     }

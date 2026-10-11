@@ -252,6 +252,7 @@ add_library(ninfer_ops STATIC
   ops/linear/bf16/bf16_gemm_mma.cu
   ops/linear/bf16/bf16_n256_k5120.cu
   ops/linear/bf16/bf16_small_t.cu
+  ops/linear/bf16/bf16_cutlass_sm70.cu
   ops/linear/bf16/bf16_dispatch.cpp
   ops/linear/fp8/fp8_format.cpp
   ops/linear/fp8/fp8_gemv.cu
@@ -392,7 +393,6 @@ if(CMAKE_CUDA_ARCHITECTURES STREQUAL "70")
     ops/linear/fp8/fp8_volta_qpn_gemm.cu
     ops/linear/fp8/fp8_prepack_sm70.cu
     ops/linear/fp8/fp8_cutlass_sm70.cu
-    ops/linear/bf16/bf16_cutlass_sm70.cu
     ops/linear/nvfp4/nvfp4_volta_qpn_gemm.cu
     ops/linear/nvfp4/nvfp4_volta_mma_gemm.cu
     ops/linear/nvfp4/nvfp4_cutlass_sm70.cu

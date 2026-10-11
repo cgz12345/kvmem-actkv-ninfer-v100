@@ -24,8 +24,8 @@ void validate_options(const EngineOptions& options) {
     if (options.artifact_path.empty()) {
         throw std::invalid_argument("Engine artifact_path must not be empty");
     }
-    if (options.artifact_path.extension() != ".ninfer") {
-        throw std::invalid_argument("NInfer accepts only .ninfer artifacts");
+    if (options.artifact_path.extension() != ".ninfer" && options.artifact_path.extension() != ".gguf") {
+        throw std::invalid_argument("NInfer accepts .ninfer artifacts and supported Qwen/Swift .gguf models");
     }
     if (options.max_context == 0) {
         throw std::invalid_argument("Engine max_context must be nonzero");
@@ -222,7 +222,7 @@ ConstructedTarget construct_target(const EngineOptions& options, DeviceContext& 
     const auto load_start = Clock::now();
 
     StartupPhaseScope inspect_phase(options.startup_observer, StartupPhase::ArtifactInspect);
-    artifact::Reader reader(options.artifact_path);
+    artifact::Reader reader(options.artifact_path, options.mmproj_path);
     inspect_phase.complete();
     // The identity the artifact is served as. A community NInfer conversion of a registered
     // architecture declares its own `metadata.name` (e.g. "swift-1.5-qwen3.8-27b-gsq-rco-iq3s"),
