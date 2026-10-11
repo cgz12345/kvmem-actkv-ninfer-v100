@@ -8,6 +8,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <exception>
 #include <iostream>
 #include <string>
@@ -473,19 +474,132 @@ int run_q4(const DeviceBuffer& hidden, const std::vector<double>& base_score) {
     return failures;
 }
 
+
+// Q4_K blocks are independently constructed/decoded here, not through the CUDA dequantizer.
+int run_gguf(bool optimized) {
+    const int rows = optimized ? kShortRows : kFullRows;
+    constexpr int block_bytes = 144, block_elements = 256;
+    const std::size_t row_bytes = kHidden / block_elements * block_bytes;
+    FixtureWeight fixture{DeviceBuffer(row_bytes * rows), {}, 0};
+    fixture.payload.fill(0);
+    auto& w = fixture.weight;
+    w.payload = w.qdata = fixture.payload.p;
+    w.payload_bytes = fixture.payload.bytes;
+    w.qtype = QType::GGUF_Q4_K;
+    w.layout = QuantLayout::GgufBlocks;
+    w.ndim = 2; w.n = rows; w.k = kHidden;
+    w.shape[0] = w.padded_shape[0] = rows;
+    w.shape[1] = w.padded_shape[1] = kHidden;
+    std::vector<int> winner_rows(18);
+    std::vector<double> reference(18);
+    for (int i = 0; i < 18; ++i) {
+        winner_rows[i] = i == 17 ? (optimized ? rows - 2 : kValidRows - 2) : i * 4001;
+        std::vector<std::uint8_t> row(row_bytes, 0);
+        const auto scale = quantized_weight::detail::f32_to_f16(float(i == 17 ? 17 : i + 1));
+        for (int b = 0; b < kHidden / block_elements; ++b) {
+            auto* block = row.data() + b * block_bytes;
+            std::memcpy(block, &scale, 2);
+            // Vary group scales and both nibble planes; dmin produces negative values at q=0.
+            const auto minimum = quantized_weight::detail::f32_to_f16(float(i == 17 ? 17 : i+1) * 0.5F);
+            std::memcpy(block+2,&minimum,2);
+            for (int g=0;g<4;++g) {
+                block[4+g]=std::uint8_t(g+1);
+                block[8+g]=1;
+                block[12+g]=std::uint8_t((g+5) | 0x10);
+            }
+            for (int j=0;j<128;++j) block[16+j]=std::uint8_t((j%16) | (((j*7+3)%16)<<4));
+        }
+        // Independently decode every represented scalar and accumulate its dot with x=1 in FP64.
+        double sum = 0;
+        for (int k = 0; k < kHidden; ++k) {
+            const auto* block = row.data() + (k / block_elements) * block_bytes;
+            std::uint16_t d, dmin; std::memcpy(&d, block, 2); std::memcpy(&dmin, block+2, 2);
+            const int j = k % block_elements, group = j / 32;
+            const auto* sc = block + 4;
+            const int a = group < 4 ? sc[group] & 63 : (sc[group+4] & 15) | ((sc[group-4] >> 6) << 4);
+            const int m = group < 4 ? sc[group+4] & 63 : (sc[group+4] >> 4) | ((sc[group] >> 6) << 4);
+            const int q = (block[16 + (j / 64) * 32 + j % 32] >> ((group & 1) * 4)) & 15;
+            sum += quantized_weight::detail::f16_to_f32(d) * a * q -
+                   quantized_weight::detail::f16_to_f32(dmin) * m;
+        }
+        reference[i] = sum;
+        fixture.payload.copy_from_host(row.data(), row.size(), winner_rows[i] * row_bytes);
+    }
+    // A large invalid padding row must be excluded by full-head valid_rows.
+    if (!optimized) {
+        std::vector<std::uint8_t> padding(row_bytes, 0);
+        auto d = quantized_weight::detail::f32_to_f16(128.0F);
+        for (int b=0; b<kHidden/256; ++b) {
+            auto* block=padding.data()+b*144; std::memcpy(block,&d,2);
+            for(int g=0;g<4;++g) block[4+g]=block[12+g]=1;
+            std::fill(block+16,block+144,std::uint8_t(0x11));
+        }
+        fixture.payload.copy_from_host(padding.data(),padding.size(),(rows-1)*row_bytes);
+    }
+    std::vector<std::int32_t> host_map(rows);
+    for(int r=0;r<rows;++r) host_map[r]=rows-1-r;
+    DeviceBuffer map(rows*4); map.copy_from_host(host_map.data(),map.bytes);
+    Tensor map_tensor(map.p,DType::I32,{rows});
+    std::vector<int> expected(18); for(int i=0;i<18;++i) expected[i]=i;
+    const auto global_id=[&](int i){return optimized?host_map[winner_rows[i]]:winner_rows[i];};
+    std::sort(expected.begin(),expected.end(),[&](int a,int b){
+        return reference[a]>reference[b] || (reference[a]==reference[b] && global_id(a)<global_id(b));
+    });
+    int failures=0;
+    cudaStream_t stream=nullptr;
+    cuda_check(cudaStreamCreateWithFlags(&stream,cudaStreamNonBlocking),"gguf test stream");
+    for(int columns : {1,7,8,9,16,33,129}) {
+        std::vector<std::uint16_t> hx(kHidden*columns,f32_to_bf16(1.0F));
+        DeviceBuffer hidden(hx.size()*2); hidden.copy_from_host(hx.data(),hidden.bytes);
+        GuardedDeviceBuffer ids(kTopK*columns*4),scores(kTopK*columns*4);
+        Tensor x(hidden.p,DType::BF16,{kHidden,columns});
+        Tensor out_ids(ids.data(),DType::I32,{kTopK,columns});
+        Tensor out_scores(scores.data(),DType::FP32,{kTopK,columns});
+        const auto bytes=ops::linear_topk_workspace_capacity_bytes(w.qtype,rows,kHidden,columns,columns);
+        GuardedDeviceBuffer scratch(bytes); WorkspaceArena workspace(DeviceSpan{scratch.data(),bytes});
+        auto launch=[&](cudaStream_t stream){
+            if(optimized) ops::linear_topk(x,w,map_tensor,out_ids,out_scores,workspace,stream);
+            else ops::linear_topk(x,w,kValidRows,out_ids,out_scores,workspace,stream);
+        };
+        launch(stream); cuda_synchronize(stream);
+        if(columns==16) replay_graph_twice(launch,stream);
+        const auto got_ids=from_device<int>(ids.data(),kTopK*columns);
+        const auto got_scores=from_device<float>(scores.data(),kTopK*columns);
+        std::vector<double> actual(kTopK*columns), oracle(kTopK*columns);
+        for(int c=0;c<columns;++c) for(int rank=0;rank<kTopK;++rank) {
+            int offset=c*kTopK+rank, i=expected[rank];
+            if(got_ids[offset]!=global_id(i)) {
+                std::cerr << "GGUF columns=" << columns << " rank=" << rank << " id=" << got_ids[offset] << " expected=" << global_id(i) << '\n';
+                ++failures;
+            }
+            actual[offset]=got_scores[offset]; oracle[offset]=reference[i];
+        }
+        failures+=verify_reduction("gguf-q4-k topk scores",actual,oracle,kA16ScoreCriterion);
+        failures+=scratch.verify_guards("gguf topk workspace");
+        failures+=ids.verify_guards("gguf topk ids")+scores.verify_guards("gguf topk scores");
+    }
+    cuda_check(cudaStreamDestroy(stream),"gguf test stream destroy");
+    failures+=verify_zero_ties(fixture,optimized?&map_tensor:nullptr,optimized?&host_map:nullptr);
+    std::cout << "GGUF " << (optimized?"mapped":"full") << " failures=" << failures << '\n';
+    return failures;
+}
+
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
     if (cuda_unavailable()) {
         std::cout << "SKIP: no usable CUDA device\n";
         return 77;
     }
     try {
+        if (argc > 1 && std::string(argv[1]) == "--gguf-only") {
+            return run_gguf(false) + run_gguf(true) == 0 ? 0 : 1;
+        }
         const std::vector<std::uint16_t> host_hidden = make_hidden();
         DeviceBuffer hidden(host_hidden.size() * sizeof(std::uint16_t));
         hidden.copy_from_host(host_hidden.data(), hidden.bytes);
 
-        int failures = 0;
+        int failures = run_gguf(false) + run_gguf(true);
         failures += run_full(QType::W8G32_F16S, "w8-full", hidden,
                              base_scores(QType::W8G32_F16S, host_hidden));
         failures += run_full(QType::FP8_E4M3FN_ROW_BF16S, "fp8-full", hidden,

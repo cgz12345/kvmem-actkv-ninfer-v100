@@ -11423,7 +11423,7 @@ void ProgramImplCore::prepare_graphs() {
         const GraphExecutionProfile code_warm = batch_one_profiles.front();
         const ops::CausalAttentionExecutionEnvelope code_warm_target{
             1, static_cast<std::uint32_t>(std::min<std::uint64_t>(
-                   capacity, static_cast<std::uint64_t>(code_warm.max) + draft_window + 1ULL))};
+                   graph_capacity(), static_cast<std::uint64_t>(code_warm.max) + draft_window + 1ULL))};
         prepare_representative(code_warm.min, 1);
         device.synchronize();
         schedule::dflash_decode_batch(dflash_state, 1, draft_window,
@@ -11448,7 +11448,7 @@ void ProgramImplCore::prepare_graphs() {
                 const ops::CausalAttentionExecutionEnvelope target_envelope{
                     1,
                     static_cast<std::uint32_t>(std::min<std::uint64_t>(
-                        capacity, static_cast<std::uint64_t>(planned.max) + draft_window + 1ULL))};
+                        graph_capacity(), static_cast<std::uint64_t>(planned.max) + draft_window + 1ULL))};
 
                 schedule::capture_dflash_decode_batch(
                     dflash_state, static_cast<std::int32_t>(batch_size), draft_window,
@@ -12468,7 +12468,7 @@ ProgramImplCore::decode_dflash_batch(std::span<const std::uint32_t> lanes,
                                                profile.max_execution_frontier, draft_window);
             target_envelope = {
                 1, static_cast<std::uint32_t>(std::min<std::uint64_t>(
-                       capacity, static_cast<std::uint64_t>(profile.max_execution_frontier) +
+                       graph_capacity(), static_cast<std::uint64_t>(profile.max_execution_frontier) +
                                      draft_window + 1ULL))};
         }
 

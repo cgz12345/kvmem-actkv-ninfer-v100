@@ -25,7 +25,7 @@ namespace ninfer::ops {
  * the stable top sixteen scores and global token ids per column.
  *
  * @details For any positive column count `U`, `hidden` is contiguous BF16 `[5120,U]`, `head` is
- * either W8G32_F16S or FP8_E4M3FN_ROW_BF16S `[248320,5120]`, and `valid_rows` is 248077. For every
+ * W8G32_F16S, FP8_E4M3FN_ROW_BF16S, or GGUF_Q4_K `[248320,5120]`, and `valid_rows` is 248077. For every
  * `t in [0,U)` and valid vocabulary row `v`, the ideal score is
  *
  * @f[
@@ -37,7 +37,8 @@ namespace ninfer::ops {
  * `[16,U]`. Rank is stored fastest; a caller may view the output as `[16,K,B]` when `U=K*B`.
  * Candidates are ordered by descending computed score, with exact score ties resolved by lower
  * global token id. Physical rows `[valid_rows,248320)` never participate. Projection uses the
- * registered A16 arithmetic profile; candidate scores are returned directly in FP32 and no dense
+ * registered projection profile (GGUF quantizes activations to q8_1). The sm_70 route privately
+ * materializes BF16 logits before selection, and returns those scores promoted to FP32. No dense
  * vocabulary-logit tensor is an observable intermediate.
  *
  * All tensors and every weight plane are preserved except that both output tensors are completely
@@ -53,7 +54,7 @@ void linear_topk(const Tensor& hidden, const Weight& head, std::int32_t valid_ro
  * scores with shortlist rows mapped to global token ids.
  *
  * @details The tensor contract is the same as the full-head overload except that `head` is
- * Q4G64_F16S `[131072,5120]` and every head row participates. `row_to_global_ids` is contiguous
+ * Q4G64_F16S or GGUF_Q4_K `[131072,5120]` and every head row participates. `row_to_global_ids` is contiguous
  * I32 `[131072]`; it contains distinct ids in `[0,248077)` and maps each local head row to the id
  * used for output and tie-breaking. Artifact binding establishes the map's range and uniqueness.
  */
