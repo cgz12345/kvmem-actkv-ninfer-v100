@@ -818,10 +818,9 @@ std::optional<KvmemHistoryMatch> ProgramImplCore::memory_restorable_history(
             continue;
         }
         for (const auto kind : kKvmemCheckpointKinds) {
-            // The Base prefix checkpoint (a short prompt's pre-final-token capture) is restored
-            // through the MTP BeforeSuffix bridge flow, which this port does not carry yet; only
-            // complete execution endpoints participate in Host-history reuse.
-            if (kind == KvmemCheckpointKind::Base) { continue; }
+            // Older checkpoints retain exact StateImage and partial-page mean statistics.
+            // Restore truncates the shared append-only archive and rebuilds the boundary MTP
+            // row with the successor token; a rewritten response may reuse this stable prefix.
             const auto* candidate = memory_checkpoint(*history, kind);
             if (!candidate) continue;
             const auto& checkpoint = *candidate;
@@ -830,7 +829,7 @@ std::optional<KvmemHistoryMatch> ProgramImplCore::memory_restorable_history(
             bool complete = frontier && checkpoint.state &&
                 checkpoint.state->size() == state_images->host_layout().image_bytes &&
                 frontier == checkpoint.identity.stamp.frontier && history->statistics &&
-                history->selector && history->statistics_frontier == frontier &&
+                history->selector && history->statistics_frontier >= frontier &&
                 history->archive.size() >= pages && history->host_versions.size() >= pages;
             for (std::uint32_t page = 0; complete && page < pages; ++page) {
                 complete = history->archive[page] &&

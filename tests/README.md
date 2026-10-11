@@ -235,3 +235,12 @@ The old/new Qwen3.8 binding matrix uses `out/qwen3_8_27b_old.ninfer` and
 `out/qwen3_8_27b_nvfp4_old.ninfer` for the legacy inventories, and the canonical filenames above
 for the companion artifacts. The legacy paths may be overridden with
 `NINFER_QWEN3_8_27B_OLD_WEIGHTS` and `NINFER_QWEN3_8_27B_NVFP4_OLD_WEIGHTS`.
+
+### Live KVMem response-replay prefix regression
+
+Run serially on a freshly started Swift/Qwen server with the production 32768-token GPU KV window
+and --kvmem-verify: python scripts/windows/test-history-prefix-recovery.py --output result.json .
+The 36K fixture verifies changed queries, a real assistant response replay, and changed reasoning
+serialization on the latest assistant suffix. It checks the secret answer, >95% prefix reuse on
+successors, and health. Native KV and StateImage comparisons are enabled by the server flag.
+Anthropic thinking-block counterpart: python scripts/windows/test-anthropic-prefix-recovery.py --output anthropic-result.json .

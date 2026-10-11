@@ -1024,3 +1024,14 @@ Context cache disabled 时采用 root-only 语义：不读取或发布 inactive 
 | public capacity options | `include/ninfer/types.h` |
 
 路径用于定位当前实现，不改变本文定义的所有权边界。
+
+### KVMem retained-prefix recovery
+
+The KVMem host-history bridge considers Base checkpoints as well as complete endpoints. A newer
+statistics frontier does not invalidate an older checkpoint: committed native KV rows are append-only,
+and the checkpoint stores its exact StateImage and partial-page mean-K tail. Restore truncates the
+archive and selector/statistics to that frontier, restores the captured mean tail, and rebuilds the
+last MTP row using the successor token. Exact token-prefix, media identity, session, archive coverage
+and query checks remain mandatory. This recovers a stable prefix when canonical response replay
+changes the generated suffix; it does not manufacture a StateImage at an arbitrary common prefix.
+An edit before every retained checkpoint still requires a cold replay.
