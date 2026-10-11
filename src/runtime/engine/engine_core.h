@@ -1932,13 +1932,15 @@ private:
 
     // The worker holds execution_mutex_ across the failing operation and this cleanup, so no
     // Program introspection can observe a partially cleared physical state.
-    void fail_all_locked(std::exception_ptr error) noexcept {
+    void fail_all_locked(std::exception_ptr error, bool report_failure = true) noexcept {
         // Preserve the engine-side cause in local diagnostics; protocol error
         // classification alone is insufficient to diagnose a failed engine.
-        try { if (error) { std::rethrow_exception(error); } }
-        catch (const std::exception& diagnostic) {
-            std::fprintf(stderr, "ENGINE FAILURE DIAGNOSTIC: %s\n", diagnostic.what());
-        } catch (...) { std::fprintf(stderr, "ENGINE FAILURE DIAGNOSTIC: unknown exception\n"); }
+        if (report_failure) {
+            try { if (error) { std::rethrow_exception(error); } }
+            catch (const std::exception& diagnostic) {
+                std::fprintf(stderr, "ENGINE FAILURE DIAGNOSTIC: %s\n", diagnostic.what());
+            } catch (...) { std::fprintf(stderr, "ENGINE FAILURE DIAGNOSTIC: unknown exception\n"); }
+        }
         std::deque<std::shared_ptr<Request>> pending;
         {
             std::lock_guard lock(queue_mutex_);
@@ -1981,7 +1983,7 @@ private:
                     const auto error = std::make_exception_ptr(RequestError(
                         RequestErrorKind::Unavailable, "inference engine is shutting down"));
                     std::scoped_lock execution_lock(execution_mutex_);
-                    fail_all_locked(error);
+                    fail_all_locked(error, false);
                     return;
                 }
             }

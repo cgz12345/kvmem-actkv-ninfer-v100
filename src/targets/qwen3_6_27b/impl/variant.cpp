@@ -181,7 +181,10 @@ Variant::dflash_graph_profiles(std::uint32_t capacity, std::uint32_t draft_windo
 namespace {
 
 // The workspace queries for GGUF products read only qtype/n/k; fabricate the four-part attention
-// geometry (q/gate 6144 rows, k/v 1024 rows) with the widest block type so the estimate is safe.
+// geometry (q/gate 6144 rows, k/v 1024 rows) with the dequantize-and-GEMM profile.
+// Mixed GGUF artifacts can contain IQ1_M even when their overall label is IQ3_S.
+// Its conversion slab and gathered input must be covered at startup; IQ4_XS alone
+// only covers matrix kernels and underestimates real mixed-format prefill scratch.
 ops::GgufProjectionWeights gguf_attention_weights() {
     static std::byte dummy_payload[64] = {};
     auto part = [](QType qtype, std::int32_t rows, std::int32_t output) {
@@ -195,10 +198,10 @@ ops::GgufProjectionWeights gguf_attention_weights() {
         return p;
     };
     ops::GgufProjectionWeights weights;
-    weights.parts.push_back(part(QType::GGUF_IQ4_XS, TextConfig::query_size, 0));
-    weights.parts.push_back(part(QType::GGUF_IQ4_XS, TextConfig::query_size, 1));
-    weights.parts.push_back(part(QType::GGUF_IQ4_XS, TextConfig::kv_size, 2));
-    weights.parts.push_back(part(QType::GGUF_IQ4_XS, TextConfig::kv_size, 3));
+    weights.parts.push_back(part(QType::GGUF_IQ1_M, TextConfig::query_size, 0));
+    weights.parts.push_back(part(QType::GGUF_IQ1_M, TextConfig::query_size, 1));
+    weights.parts.push_back(part(QType::GGUF_IQ1_M, TextConfig::kv_size, 2));
+    weights.parts.push_back(part(QType::GGUF_IQ1_M, TextConfig::kv_size, 3));
     return weights;
 }
 
@@ -206,7 +209,7 @@ ops::GgufProjectionWeights gguf_gdn_input_weights() {
     static std::byte dummy_payload[64] = {};
     auto part = [](std::int32_t rows, std::int32_t output, std::int32_t row) {
         ops::GgufProjectionPart p;
-        p.weight.qtype  = QType::GGUF_IQ4_XS;
+        p.weight.qtype  = QType::GGUF_IQ1_M;
         p.weight.n      = rows;
         p.weight.k      = TextConfig::hidden;
         p.weight.layout = QuantLayout::GgufBlocks;
@@ -225,12 +228,22 @@ ops::GgufProjectionWeights gguf_gdn_input_weights() {
 
 std::size_t gguf_mlp_workspace_bytes(std::int32_t first, std::int32_t last) {
     const std::size_t pair = ops::linear_swiglu_pair_workspace_capacity_bytes(
-        QType::GGUF_IQ4_XS, QType::GGUF_IQ4_XS, TextConfig::intermediate, TextConfig::hidden,
+        QType::GGUF_IQ1_M, QType::GGUF_IQ1_M, TextConfig::intermediate, TextConfig::hidden,
         ops::LinearPolicy::A16Only, first, last);
     const std::size_t down = ops::linear_add_workspace_capacity_bytes(
-        QType::GGUF_IQ4_XS, TextConfig::hidden, TextConfig::intermediate,
+        QType::GGUF_IQ1_M, TextConfig::hidden, TextConfig::intermediate,
         ops::LinearPolicy::A16Only, first, last);
-    return pair + down;
+    WorkspaceLayoutBuilder layout;
+    (void)layout.alloc(DType::BF16, {TextConfig::intermediate, last});
+    {
+        auto scope = layout.scope();
+        (void)layout.alloc_bytes(pair);
+    }
+    {
+        auto scope = layout.scope();
+        (void)layout.alloc_bytes(down);
+    }
+    return layout.peak_bytes(1);
 }
 
 } // namespace
@@ -497,7 +510,7 @@ std::size_t Variant::attention_output_projection_workspace_capacity_bytes(
                                                         kFp8TextPolicy, first, last);
     case WeightsProfile::Qwen38Gguf:
         return ops::linear_add_workspace_capacity_bytes(
-            QType::GGUF_IQ4_XS, TextConfig::hidden, TextConfig::query_size,
+            QType::GGUF_IQ1_M, TextConfig::hidden, TextConfig::query_size,
             ops::LinearPolicy::A16Only, first, last);
     }
     throw std::logic_error("invalid 27B weights profile");
@@ -540,7 +553,7 @@ std::size_t Variant::gdn_input_projection_snapshot_workspace_capacity_bytes(
     case WeightsProfile::Qwen38Gguf:
         return std::max(kMinimumLeafWorkspaceBytes,
                         ops::gdn_input_proj_conv_snapshot_workspace_capacity_bytes(
-                            QType::GGUF_IQ4_XS, 16384, TextConfig::hidden,
+                            QType::GGUF_IQ1_M, 16384, TextConfig::hidden,
                             ops::LinearPolicy::A16Only, batch_size, first, last));
     case WeightsProfile::Qwen36Nvfp4:
     case WeightsProfile::Qwen38Nvfp4W4a4:
@@ -584,7 +597,7 @@ std::size_t Variant::gdn_input_projection_record_workspace_capacity_bytes(
     case WeightsProfile::Qwen38Gguf:
         return std::max(kMinimumLeafWorkspaceBytes,
                         ops::gdn_input_proj_conv_record_workspace_capacity_bytes(
-                            QType::GGUF_IQ4_XS, 16384, TextConfig::hidden,
+                            QType::GGUF_IQ1_M, 16384, TextConfig::hidden,
                             ops::LinearPolicy::A16Only, batch_size, first, last));
     }
     throw std::logic_error("invalid 27B weights profile");
@@ -612,7 +625,7 @@ std::size_t Variant::gdn_output_projection_workspace_capacity_bytes(WeightsProfi
                                                         kFp8TextPolicy, first, last);
     case WeightsProfile::Qwen38Gguf:
         return ops::linear_add_workspace_capacity_bytes(
-            QType::GGUF_IQ4_XS, TextConfig::hidden, TextConfig::value_dim,
+            QType::GGUF_IQ1_M, TextConfig::hidden, TextConfig::value_dim,
             ops::LinearPolicy::A16Only, first, last);
     }
     throw std::logic_error("invalid 27B weights profile");

@@ -146,9 +146,7 @@ void execute(const Tensor& hidden, const Weight& head, const Tensor* id_map, Ten
     // sm_70 port: materialize the head logits with the general linear op, then a single
     // top-16 selection kernel. The BF16 logit scratch is a rounding the fused kernel avoids.
     for (int first = 0; first < hidden.ne[1];) {
-        // Keep GGUF on the qualified vector path: Volta matrix projection produced
-        // nondeterministic score errors for repeated equal input columns in the oracle.
-        const int chunk_limit = profile == HeadProfile::Gguf ? 8 : detail::kLinearTopKMaxChunkColumns;
+        const int chunk_limit = detail::kLinearTopKMaxChunkColumns;
         const int columns = std::min(chunk_limit, hidden.ne[1] - first);
         auto x          = column_slice(hidden, first, columns);
         auto out_ids    = column_slice(ids, first, columns);
@@ -175,7 +173,7 @@ std::size_t linear_topk_workspace_capacity_bytes(QType qtype, std::int32_t head_
     if (min_columns < 1 || max_columns < min_columns) {
         throw std::invalid_argument("linear_topk workspace: invalid column interval");
     }
-    const std::int32_t chunk = std::min(max_columns, profile == HeadProfile::Gguf ? 8 : detail::kLinearTopKMaxChunkColumns);
+    const std::int32_t chunk = std::min(max_columns, detail::kLinearTopKMaxChunkColumns);
     std::size_t capacity = static_cast<std::size_t>(head_rows) * chunk * sizeof(std::uint16_t);
     if (profile == HeadProfile::Gguf) {
         WorkspaceLayoutBuilder layout;

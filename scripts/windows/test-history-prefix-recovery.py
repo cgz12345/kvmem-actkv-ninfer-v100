@@ -14,11 +14,13 @@ def main():
     parser.add_argument('--base-url', default='http://127.0.0.1:8088')
     parser.add_argument('--output', required=True)
     parser.add_argument('--window-tokens', type=int, default=32768)
+    parser.add_argument('--archive-repeats', type=int, default=2800,
+                        help='Use a smaller archive for small-window workspace regressions.')
     args = parser.parse_args()
     output = Path(args.output)
     history = [
         {'role': 'system', 'content': 'Remember the secret code is ORCHID-7319. Answer questions concisely.'},
-        {'role': 'user', 'content': 'Background archive: the lamps are blue and the books are green. ' * 2800},
+        {'role': 'user', 'content': 'Background archive: the lamps are blue and the books are green. ' * args.archive_repeats},
         {'role': 'assistant', 'content': 'Acknowledged.'},
     ]
     questions = ['What is the secret code? Reply only with the code.',

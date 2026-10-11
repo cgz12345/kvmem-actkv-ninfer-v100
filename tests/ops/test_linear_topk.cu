@@ -561,6 +561,9 @@ int run_gguf(bool optimized) {
             if(optimized) ops::linear_topk(x,w,map_tensor,out_ids,out_scores,workspace,stream);
             else ops::linear_topk(x,w,kValidRows,out_ids,out_scores,workspace,stream);
         };
+        // Guard initialization runs on the default stream; the execution stream is
+        // nonblocking, so explicitly finish initialization before launching the op.
+        cuda_synchronize();
         launch(stream); cuda_synchronize(stream);
         if(columns==16) replay_graph_twice(launch,stream);
         const auto got_ids=from_device<int>(ids.data(),kTopK*columns);
