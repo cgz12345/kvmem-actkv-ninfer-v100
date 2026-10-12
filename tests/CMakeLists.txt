@@ -438,3 +438,9 @@ foreach(test_target IN LISTS ninfer_qwen3_6_27b_internal_tests)
     ${PROJECT_SOURCE_DIR}/src/targets/qwen3_6_27b/export
     ${PROJECT_SOURCE_DIR}/src/targets/qwen3_6/export)
 endforeach()
+
+# Opt-in long-session raw-token diagnostics, no automatic CTest registration.
+add_executable(ninfer_tool_raw_stress tool_raw_stress.cpp)
+target_include_directories(ninfer_tool_raw_stress PRIVATE
+  ${PROJECT_SOURCE_DIR}/include ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/third_party)
+target_link_libraries(ninfer_tool_raw_stress PRIVATE ninfer_engine ninfer_artifact ninfer_product_prompt_input)

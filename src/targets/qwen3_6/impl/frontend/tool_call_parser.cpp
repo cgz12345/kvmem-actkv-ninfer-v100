@@ -443,6 +443,18 @@ private:
     FallbackReason parse_tool_call(std::size_t& pos, RawToolCall& call) const {
         if (!consume(pos, kToolOpen)) { return FallbackReason::MalformedStructure; }
         skip_format_whitespace(text_, pos);
+        // Some models redundantly emit an active tool label before the actual
+        // function marker. Consume one declared label, never arbitrary prose.
+        if (!starts_with_at(text_, pos, kFunctionOpen)) {
+            const auto marker = text_.find(kFunctionOpen, pos);
+            if (marker == std::string_view::npos || marker - pos > max_name_length_ + 8)
+                return FallbackReason::MalformedStructure;
+            const auto label = trim_format_whitespace(text_.substr(pos, marker - pos));
+            const auto* tool = find_tool_contract(contract_, label);
+            if (!valid_function_name(label, max_name_length_) || !tool || !tool->unambiguous)
+                return FallbackReason::MalformedStructure;
+            pos = marker;
+        }
         const FallbackReason failure = parse_function(pos, call);
         if (failure != FallbackReason::None) { return failure; }
         skip_format_whitespace(text_, pos);
@@ -521,11 +533,25 @@ private:
                 const std::size_t sibling = text_.find(kParamOpen, value_begin);
                 const auto sibling_name = text_.substr(sibling + kParamOpen.size(),
                     nested_open_end - 1 - sibling - kParamOpen.size());
-                // Only declared siblings on a fresh line can delimit a missing close.
-                // Embedded markup and unknown names remain ambiguous and are rejected.
+                // A line boundary is authoritative. Also accept a whitespace
+                // boundary outside quoted data when the outer tool close survives.
+                // Never reinterpret an embedded quoted marker as an argument.
                 const auto line = text_.rfind('\n', sibling);
-                if (!parameter || line == std::string_view::npos ||
-                    !trim_format_whitespace(text_.substr(line + 1, sibling - line - 1)).empty() ||
+                const bool fresh_line = line != std::string_view::npos &&
+                    trim_format_whitespace(text_.substr(line + 1, sibling - line - 1)).empty();
+                char quote = 0;
+                bool escaped = false;
+                for (auto i = value_begin; i < sibling; ++i) {
+                    const char ch = text_[i];
+                    if (escaped) { escaped = false; continue; }
+                    if (ch == '\\') { escaped = true; continue; }
+                    if (quote) { if (ch == quote) quote = 0; }
+                    else if (ch == '\'' || ch == '"' || ch == '`') quote = ch;
+                }
+                const bool framed_inline = tool_close != std::string_view::npos &&
+                    sibling > value_begin && quote == 0 &&
+                    (text_[sibling - 1] == ' ' || text_[sibling - 1] == '\t');
+                if (!parameter || (!fresh_line && !framed_inline) ||
                     !find_parameter_contract(*tool, sibling_name)) {
                     return FallbackReason::MalformedStructure;
                 }

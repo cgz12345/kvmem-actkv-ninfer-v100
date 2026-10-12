@@ -2271,6 +2271,37 @@ int test_media_preparation_cancellation() {
     return check(false, "cancelled media preparation completed successfully");
 }
 
+int test_protected_instruction_prefix(const Frontend& frontend) {
+    const auto text_part = [](std::string text) {
+        return ninfer::MessagePart{.kind = ninfer::MessagePartKind::Text, .text = std::move(text), .media = {}};
+    };
+    ninfer::PromptInput input;
+    ninfer::ChatMessage system;
+    system.role = ninfer::ChatRole::System;
+    system.parts.push_back(text_part("System instructions."));
+    input.messages.push_back(std::move(system));
+    ninfer::ChatMessage user;
+    user.role = ninfer::ChatRole::User;
+    user.parts.push_back(text_part("Read the report."));
+    input.messages.push_back(std::move(user));
+    input.options.tool_jsons = {R"({"type":"function","function":{"name":"Read","parameters":{"type":"object","properties":{"file_path":{"type":"string"}}}}})"};
+    input.context_cache.allow_engine_automatic_shared_prefixes = false;
+    auto prompt = frontend.prepare(input);
+    const auto& data = FrontendFactory::inspect(prompt);
+    int failures = check(data.protected_prefix_tokens > 0 &&
+        data.protected_prefix_tokens < data.token_ids.size(), "instruction/tool prefix was not protected");
+    input.messages.back().parts.clear();
+    input.messages.back().parts.push_back(text_part(std::string(1000,'x')));
+    auto longer = frontend.prepare(input);
+    failures += check(FrontendFactory::inspect(longer).protected_prefix_tokens == data.protected_prefix_tokens,
+        "user history changed the protected instruction boundary");
+    input.context_cache.allow_engine_automatic_shared_prefixes = true;
+    auto cached = frontend.prepare(input);
+    failures += check(FrontendFactory::inspect(cached).protected_prefix_tokens == data.protected_prefix_tokens,
+        "cache policy changed semantic instruction protection");
+    return failures;
+}
+
 } // namespace
 
 int run_tests() {
@@ -2300,6 +2331,7 @@ int run_tests() {
     run("test_adjacent_tool_message_boundary", [&] { return test_adjacent_tool_message_boundary(); });
     run("test_official_resource_guards", [&] { return test_official_resource_guards(); });
     run("test_invalid_public_part_enums", [&] { return test_invalid_public_part_enums(frontend); });
+    run("test_protected_instruction_prefix", [&] { return test_protected_instruction_prefix(frontend); });
     run("test_text_and_image_prepare", [&] { return test_text_and_image_prepare(frontend); });
     run("test_literal_control_tokens_with_media", [&] { return test_literal_control_tokens_with_media(); });
     run("test_image_resize_rejection_policy", [&] { return test_image_resize_rejection_policy(); });

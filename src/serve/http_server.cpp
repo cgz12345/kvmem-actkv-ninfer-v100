@@ -10,6 +10,8 @@
 
 #include <chrono>
 #include <exception>
+#include <filesystem>
+#include <fstream>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -240,8 +242,8 @@ HttpServer::HttpServer(ServeOptions options, std::shared_ptr<spdlog::logger> log
     register_routes();
 }
 
-HttpServer::RequestLifecycle::RequestLifecycle(HttpServer& owner, RequestLogContext context)
-    : owner_(&owner), context_(std::move(context)) {
+HttpServer::RequestLifecycle::RequestLifecycle(HttpServer& owner, RequestLogContext context, std::string diagnostic_body)
+    : owner_(&owner), context_(std::move(context)), diagnostic_body_(std::move(diagnostic_body)) {
     owner_->record_request_start(context_);
 }
 
@@ -251,19 +253,60 @@ bool HttpServer::RequestLifecycle::claim(State terminal) noexcept {
 }
 
 void HttpServer::RequestLifecycle::done(const GenerationOutcome& outcome) {
-    if (claim(State::Done)) { owner_->record_request_done(context_, outcome); }
+    if (claim(State::Done)) {
+        owner_->record_request_done(context_, outcome);
+        owner_->capture_failed_tool_request(context_, outcome, diagnostic_body_);
+    }
 }
 
 void HttpServer::RequestLifecycle::failure(const RequestFailure& failure) {
-    if (claim(State::Error)) { owner_->record_request_failure(context_, failure); }
+    if (claim(State::Error)) {
+        owner_->record_request_failure(context_, failure);
+        if (failure.error_code == "context_length_exceeded")
+            owner_->capture_failed_request(context_, diagnostic_body_, failure.machine_message);
+    }
 }
 
 void HttpServer::RequestLifecycle::response_failure(const RequestFailure& failure) {
     owner_->record_response_failure(context_.id, failure);
 }
 
-std::shared_ptr<HttpServer::RequestLifecycle> HttpServer::begin_request(RequestLogContext context) {
-    return std::make_shared<RequestLifecycle>(*this, std::move(context));
+std::shared_ptr<HttpServer::RequestLifecycle> HttpServer::begin_request(RequestLogContext context, const std::string& body) {
+    std::string diagnostic_body;
+    if (!options_.failed_tool_request_dir.empty() && body.size() <= (4ULL << 20))
+        diagnostic_body = body;
+    return std::make_shared<RequestLifecycle>(*this, std::move(context), std::move(diagnostic_body));
+}
+
+void HttpServer::capture_failed_tool_request(const RequestLogContext& context,
+        const GenerationOutcome& outcome, const std::string& body) noexcept {
+    if (body.empty() || !outcome.tool_call_parse.marker_seen ||
+        outcome.tool_call_parse.fallback_reason == ninfer::ToolCallParseFallbackReason::None)
+        return;
+    capture_failed_request(context, body, ninfer::tool_call_parse_fallback_reason_name(
+        outcome.tool_call_parse.fallback_reason));
+}
+
+void HttpServer::capture_failed_request(const RequestLogContext& context,
+        const std::string& body, const std::string& reason) noexcept {
+    if (body.empty()) return;
+    try {
+        std::lock_guard<std::mutex> lock(failed_capture_mutex_);
+        if (failed_capture_count_ >= 3) return;
+        const auto timestamp = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        const std::filesystem::path folder(options_.failed_tool_request_dir);
+        std::filesystem::create_directories(folder);
+        const auto path = folder / ("failed-tool-" + std::to_string(timestamp) + "-" +
+                                    std::to_string(context.id) + ".json");
+        // Bodies only, never HTTP authentication headers. Exact body bytes permit
+        // replay; this opt-in diagnostic may contain private conversation content.
+        nlohmann::json capture = {{"protocol", context.protocol}, {"request_id", context.id},
+            {"request_body", body}, {"fallback_reason", reason}};
+        std::ofstream output(path, std::ios::binary);
+        output << capture.dump(2);
+        if (output.good()) ++failed_capture_count_;
+    } catch (...) { /* A diagnostic failure must not fail a generation request. */ }
 }
 
 void HttpServer::record_request_start(const RequestLogContext& context) {

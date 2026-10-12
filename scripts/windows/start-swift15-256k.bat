@@ -1,7 +1,8 @@
 @echo off
 rem ============================================================================
 rem  NInfer V100 + KVMem - Swift-1.5-Qwen3.8-27B (GSQ-RCO IQ3_S) + MTP + Vision
-rem  Same tuning as start-vision-256k.bat; only the artifact differs. The community
+rem  Large Agent headers use 30K selected + 2K reserve in the same 32K KV window.
+rem  The community
 rem  container declares its own name, which the Engine resolves through the converter
 rem  recipe (qwen3_8_27b_gguf) to the registered qwen3.8-27b target.
 rem  Measured on this card, 4030-token prompt / 256-token answer: 95.4 tok/s decode,
@@ -23,7 +24,7 @@ set PATH=%CUDA_PATH%\bin;%PATH%
   --lm-head-draft ^
   --preserve-thinking ^
   --pending-timeout-ms 600000 ^
-  --kvmem-selected 24576 --kvmem-reserve 8192 ^
+  --kvmem-selected 30720 --kvmem-reserve 2048 ^
   --kvmem-sink 5120 --kvmem-recent 64 ^
   --kvmem-host-mib 12288 --kvmem-retained 4 ^
   --vision ^

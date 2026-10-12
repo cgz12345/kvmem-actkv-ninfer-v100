@@ -1487,6 +1487,9 @@ PreparedPrompt Frontend::prepare(PromptInput input, const PreparationControl& co
         cache_boundaries   = std::move(encoded.cache_boundaries);
         assign_text_positions(result);
     }
+    const auto instruction_end = leading_boundary.value_or(0U);
+    if (instruction_end < message_boundaries.size() && message_boundaries[instruction_end])
+        result.protected_prefix_tokens = *message_boundaries[instruction_end];
     (void)checked_token_count(result.token_ids.size());
     result.identity.reusable = true;
     result.context_cache     = prepare_context_cache(

@@ -1045,3 +1045,14 @@ retained history cells; save/restore/erase actions are not implemented.
 ## Native GGUF models
 
 The server accepts supported Qwen/Swift dense 27B `.gguf` files through the native CUDA engine. See [native GGUF loading](maintainer/native-gguf-loading.md) for exact geometry, quantization formats and required embedded frontend metadata. This route supports text generation, tools and embedded MTP (`--spec mtp --draft-tokens 3`). A file missing its MTP layer fails clearly when MTP is selected. Add `--lm-head-draft` for the indexed proposal head and `--vision --mmproj projector.gguf` for a matching native vision projector. No frontend companion directory is required. DFlash is not supported on this route.
+
+
+## KVMem instruction and tool preservation
+
+The leading system/developer instructions and complete tool-definition preamble are protected by their exact prepared-token boundary. KVMem makes every page covering that prefix mandatory at each pressure selection, including restored history. The configured `--kvmem-sink` is a minimum; it does not limit instruction protection to a guessed client-specific header size. This is independent of OpenAI/Anthropic cache-control hints and does not increase the configured GPU window. A larger header leaves less of the selected budget available for history.
+
+If a request can require compression and its protected prefix plus recent pages exceeds the selected budget, it is rejected before generation with `context_length_exceeded`; the engine remains usable. Reduce unnecessary tool definitions or increase the selected budget rather than allowing instruction loss.
+
+For large Agent tool sets on the 32K Swift configuration, `--kvmem-selected 30720 --kvmem-reserve 2048 --prefill-chunk 2048` keeps the same total GPU window while allowing a larger protected header. A real 76-tool request required 28889 protected tokens and exceeded the old 24576 selected budget. This allocation leaves less history space and triggers pressure selection more frequently; it is not a general speed improvement. Native BF16 vision uses a smaller window and cannot inherit this allocation.
+
+`--failed-tool-request-dir DIR` optionally captures the original request body after a tool-markup parse failure or a context-length admission failure. It is disabled by default. Only the first three failures per server process and bodies up to4MiB are captured; HTTP authentication headers are never included. Bodies may contain private messages/file content and must stay local. This is a replay diagnostic, not a guarantee that malformed output can be executed. OpenAI Responses requests referencing previous_response_id still depend on their response-store history. Ordinary successful requests are not written to this directory.

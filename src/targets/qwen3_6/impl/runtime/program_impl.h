@@ -10083,6 +10083,7 @@ void ProgramImplCore::start_sequence(std::uint32_t lane, SequenceState& sequence
             // reused; a miss recomputes the quoted prefix under the reserved budget.
             staged.memory_restore_frontier   = request_plan.memory_restore_frontier;
             staged.memory_restore_generation = request_plan.memory_restore_generation;
+            sequence.window.protected_prefix_tokens = staged.prompt.protected_prefix_tokens;
             sequence.window.session_key          = staged.prompt.context_cache.session_key;
             sequence.window.publication_order    = next_memory_publication_order++;
             sequence.window.update_session_index =

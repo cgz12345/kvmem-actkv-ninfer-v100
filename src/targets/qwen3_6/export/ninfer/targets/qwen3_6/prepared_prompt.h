@@ -139,6 +139,9 @@ struct PrepareStats {
 
 struct PreparedPromptData {
     std::vector<TokenId> token_ids;
+    // Exact end of the leading system/developer and tool-definition preamble.
+    // KVMem must retain these pages independently of client cache hints.
+    std::uint32_t protected_prefix_tokens = 0;
     // Exact token span of the final user query, for the KVMem retrieval probe. Absent when
     // the frontend cannot license a canonical boundary.
     std::optional<TokenSpan> memory_query;

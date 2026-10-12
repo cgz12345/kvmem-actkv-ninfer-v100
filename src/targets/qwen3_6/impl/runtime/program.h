@@ -447,6 +447,7 @@ struct KvmemHistoryMatch {
 using KvmemHostRecord = std::vector<std::byte>;
 
 struct KvmemWindowState {
+    std::uint32_t protected_prefix_tokens = 0;
     std::optional<PreparedSessionKey> session_key;
     std::uint64_t publication_order = 0;
     bool update_session_index = true;

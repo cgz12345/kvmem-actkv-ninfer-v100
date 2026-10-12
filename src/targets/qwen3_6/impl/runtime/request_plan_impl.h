@@ -286,7 +286,18 @@ RequestBasePlan ProgramImplCore::plan_request(const PreparedPromptData& prompt,
     } else if (speculative_backend == SpeculativeBackend::DFlash) {
         base->backend_kv_page_entitlement = pages_for_tokens(reserved_context_tokens);
     }
+    if (prompt.protected_prefix_tokens > prompt.token_ids.size())
+        throw std::invalid_argument("prepared instruction prefix exceeds prompt");
     if (kvmem_window_tokens) {
+        const auto pinned_pages = std::max(kvmem_options.sink_blocks(),
+                                          pages_for_tokens(prompt.protected_prefix_tokens));
+        const auto selected_pages = kvmem_options.selected_tokens / kPagedKVPageSize;
+        if (reserved_context_tokens > kvmem_window_tokens &&
+            pinned_pages + kvmem_options.recent_blocks() > selected_pages)
+            throw RequestError(RequestErrorKind::ContextLengthExceeded,
+                "KVMem selected budget cannot preserve system/tool instructions: protected=" +
+                std::to_string(prompt.protected_prefix_tokens) + " tokens, selected=" +
+                std::to_string(kvmem_options.selected_tokens) + "; reduce tool definitions or increase selected tokens");
         // KVMem: the device entitlement is the sparse window; the bounded Host archive must
         // be able to reserve the request's entire legal execution before it turns Active.
         const bool retain_history = options.allow_prefix_reuse && prompt.identity.reusable;

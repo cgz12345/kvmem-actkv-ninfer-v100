@@ -769,6 +769,44 @@ int test_natural_stop_missing_closers() {
     return failures;
 }
 
+int test_agent_label_and_framed_missing_closes() {
+    auto contract = contract_from_definitions({
+        tool_definition("Read", Json{{"file_path", Json{{"type", "string"}}}}),
+        tool_definition("Bash", Json{{"command", Json{{"type", "string"}}},
+                                      {"description", Json{{"type", "string"}}}})});
+    const std::string command = "sed -n '133,240p' 作业一解答.tex";
+    const std::string text = "<tool_call> Read <function=Bash> <parameter=command> " + command +
+        " <parameter=description> Read report sections: problem statement and CN derivation </tool_call>";
+    int failures = 0;
+    for (int chunk : {1, 7, 128}) {
+        fi::ToolCallOutputDecoder decoder(contract, 128);
+        std::string visible;
+        for (std::size_t i = 0; i < text.size(); i += chunk)
+            visible += decoder.feed(std::string_view(text).substr(i, chunk));
+        auto result = decoder.finish(true);
+        failures += check(visible.empty() && result.content.empty() && result.tool_calls.size() == 1,
+                          "reported Agent output was not recovered structurally");
+        if (result.tool_calls.size() == 1) {
+            const auto args = Json::parse(result.tool_calls[0].arguments_json);
+            failures += check(result.tool_calls[0].name == "Bash" && args.at("command") == " " + command + " " &&
+                args.at("description") == " Read report sections: problem statement and CN derivation ",
+                "Agent recovery changed function or argument bytes");
+        }
+    }
+    for (const std::string prefix : {"Unknown", "Read execute this", "Read Read"}) {
+        auto result = fi::parse_qwen_tool_call_output("<tool_call> " + prefix +
+            " <function=Bash><parameter=command>echo test</parameter></function></tool_call>",128,*contract,true);
+        failures += check(!result.is_tool_call_response, "arbitrary tool prefix was accepted");
+    }
+    const std::string quoted = "<tool_call><function=Bash><parameter=command>echo ' <parameter=description>data' </tool_call>";
+    failures += check(!fi::parse_qwen_tool_call_output(quoted,128,*contract,true).is_tool_call_response,
+                      "quoted parameter markup was reinterpreted as structure");
+    const std::string truncated = "<tool_call> Read <function=Bash><parameter=command>echo test <parameter=description>tail";
+    failures += check(!fi::parse_qwen_tool_call_output(truncated,128,*contract,false).is_tool_call_response,
+                      "truncated inline arguments were recovered");
+    return failures;
+}
+
 int test_incremental_embedded_parameter_markup() {
     auto contract = output_contract_for("bash", Json{{"command", Json{{"type", "string"}}}});
     const std::string command = "pattern='<parameter=inner>value</parameter>'\n"
@@ -819,6 +857,7 @@ int main() {
     failures += test_incremental_fallback_preserves_bytes();
     failures += test_incremental_embedded_parameter_markup();
     failures += test_natural_stop_missing_closers();
+    failures += test_agent_label_and_framed_missing_closes();
     if (failures == 0) { std::cout << "ok\n"; }
     return failures == 0 ? 0 : 1;
 }

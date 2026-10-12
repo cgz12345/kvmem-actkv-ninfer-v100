@@ -404,7 +404,8 @@ void ProgramImplCore::prepare_window(SequenceState& sequence, std::uint32_t begi
         if (count == 0) {
             mandatory.push_back(0);
         } else {
-            const auto sink_keep = std::min(kvmem_options.sink_blocks(), count);
+            const auto sink_keep = std::min(std::max(kvmem_options.sink_blocks(),
+                kv_pages_for_tokens(state.protected_prefix_tokens)), count);
             for (std::uint32_t id = 0; id < sink_keep; ++id) mandatory.push_back(id);
             for (const auto id : state.media_pages) if (id < count) mandatory.push_back(id);
             const auto recent_keep = std::min(kvmem_options.recent_blocks(), count);
@@ -461,6 +462,14 @@ void ProgramImplCore::prepare_window(SequenceState& sequence, std::uint32_t begi
                 }
             }
             std::sort(selected.begin(), selected.end());
+        }
+        if (kvmem_options.verify_transfers) {
+            const auto protected_pages = std::min(kv_pages_for_tokens(state.protected_prefix_tokens), count);
+            for (std::uint32_t page = 0; page < protected_pages; ++page)
+                if (std::find(selected.begin(), selected.end(), page) == selected.end())
+                    throw std::logic_error("KVMem lost a protected instruction/tool page");
+            std::fprintf(stderr, "KVMEM_PROTECTED_PREFIX tokens=%u pages=%u preserved=1\n",
+                         state.protected_prefix_tokens, protected_pages);
         }
         session.prepare(backend->stamp(), selected, mandatory,
             {kvmem_options.selected_tokens, kvmem_options.reserve_tokens, kvmem_window_tokens,
@@ -883,6 +892,7 @@ bool ProgramImplCore::restore_memory_history(SequenceState& sequence,
     sequence.window = std::move(*history);
     history.reset();
     auto& window = sequence.window;
+    window.protected_prefix_tokens = staged.prompt.protected_prefix_tokens;
     const bool same_query = memory_same_query(window, staged.prompt, *frontier);
     auto checkpoint = std::move(memory_checkpoint_slot(window, match->kind));
     // The previous Program address-space lease has been released. These IDs

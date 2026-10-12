@@ -27,6 +27,8 @@ ServeOptions parse(std::vector<std::string> arguments) {
 
 int main() {
     int failures = 0;
+    const auto capture = parse({"ninfer-serve", "model.ninfer", "--failed-tool-request-dir", "diagnostics"});
+    failures += check(capture.failed_tool_request_dir == "diagnostics", "failed-tool capture option mismatch");
     const auto native_vision = parse({"ninfer-serve", "model.gguf", "--vision", "--mmproj", "projector.gguf"});
     failures += check(native_vision.enable_vision && native_vision.mmproj_path == "projector.gguf",
                       "native GGUF projector option mismatch");

@@ -50,7 +50,7 @@ public:
 private:
     class RequestLifecycle {
     public:
-        RequestLifecycle(HttpServer& owner, RequestLogContext context);
+        RequestLifecycle(HttpServer& owner, RequestLogContext context, std::string diagnostic_body);
 
         void done(const GenerationOutcome& outcome);
         void failure(const RequestFailure& failure);
@@ -69,10 +69,18 @@ private:
 
         HttpServer* owner_ = nullptr;
         RequestLogContext context_;
+        std::string diagnostic_body_;
         std::atomic<State> state_{State::Pending};
     };
 
-    [[nodiscard]] std::shared_ptr<RequestLifecycle> begin_request(RequestLogContext context);
+    [[nodiscard]] std::shared_ptr<RequestLifecycle> begin_request(RequestLogContext context, const std::string& body = {});
+
+    void capture_failed_tool_request(const RequestLogContext& context,
+                                     const GenerationOutcome& outcome, const std::string& body) noexcept;
+    void capture_failed_request(const RequestLogContext& context, const std::string& body,
+                                const std::string& reason) noexcept;
+    std::mutex failed_capture_mutex_;
+    std::uint32_t failed_capture_count_ = 0;
 
     void register_routes();
     void handle_chat_completions(const httplib::Request& req, httplib::Response& res);
