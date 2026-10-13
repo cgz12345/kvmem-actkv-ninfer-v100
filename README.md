@@ -8,21 +8,7 @@ working set, OpenAI/Anthropic-compatible HTTP serving, image/video input, and a 
 loader. It is the Windows/V100 KVMem line of the [NInfer](#upstream-artifacts-and-credits)
 engine, maintained from real 16 GB measurements, not paper specs.
 
-## Looking for NInfer / KVMem / ActKV on V100?
-
-This community port is for **Windows + NVIDIA Tesla V100 (sm_70)**. Start here if the upstream build targets newer GPUs.
-
-| Capability | What you can use here |
-|---|---|
-| Hardware | Single Tesla V100 16 GB, Windows, CUDA 12.8 |
-| Long context | KVMem host KV archive; up to 262,144 logical tokens with a bounded GPU window |
-| Retrieval | Optional ActKV / LRFU, mean or max aggregation; documented A/B results |
-| Quantization | Native supported Qwen/Swift dense 27B GGUF K/IQ formats; no whole-model conversion |
-| Agent clients | OpenAI / Anthropic APIs, MTP, tool-header preservation, vision |
-
-**[Windows setup](docs/windows/SWIFT-KVMEM.md) · [Native GGUF support](docs/maintainer/native-gguf-loading.md) · [ActKV results and launcher](docs/maintainer/actkv-reproduction.md)**
-
-This is an independent community fork. Credit and upstream links: [NOTICE](NOTICE.md). The supported GGUF scope is Qwen/Swift dense 27B, not arbitrary architectures.
+**[Windows setup](docs/windows/SWIFT-KVMEM.md) · [Native GGUF support](docs/maintainer/native-gguf-loading.md) · [ActKV results](docs/maintainer/actkv-reproduction.md)**
 
 ## What this project adds
 
@@ -41,8 +27,8 @@ This is an independent community fork. Credit and upstream links: [NOTICE](NOTIC
   neutral at the production 32K window and guarded under small windows by the fresh-slot
   reservation ([details](docs/serving.md#actkv-action-oriented-retrieval-opt-in)).
   The [reference reproduction](docs/maintainer/actkv-reproduction.md) provides a mean-profile
-  launcher and the original 33-needle/80-call workload. The Qwen mean profile passed33/33
-  immediate and final recall,80 tool calls and14/14 cross-tool recall; baseline also passed.
+  launcher and the original 33-needle/80-call workload. The Qwen mean profile passed 33/33
+  immediate and final recall, 80 tool calls and 14/14 cross-tool recall; baseline also passed.
   Mean and max are evaluated separately; no advantage over baseline is established.
 - **Native GGUF loading** — Qwen/Swift dense 27B `.gguf` runs directly on the CUDA engine,
   keeping the original K/IQ quantization blocks: text, embedded MTP, indexed draft heads and
@@ -95,6 +81,12 @@ speculation flags explicit:
 All profiles serve the same HTTP surface (port 8088 for the Swift profile, 18200 for the reference
 instance) with model id `qwen3.8-27b` (`ninfer-27b` for the reference launcher).
 
+The Swift launcher defaults to 262,144 logical context tokens, a 32,768-token GPU KV
+window, 65,536 output tokens and a 16,384-token thinking budget. Native effort tiers are
+`low`, `medium`, `xhigh`; `minimal` maps to `low`, `high`/`max` to `xhigh`, and `none`
+disables thinking. Request fields override sampling defaults. `json_object` is a prompt-level
+hint, not grammar-constrained JSON; named forced tool selection and `json_schema` are rejected.
+
 ## Measured results
 
 The numbers below come from this card (Tesla V100 16 GB, Windows, CUDA 12.8) and the binaries in
@@ -145,16 +137,11 @@ entire 8,192-token budget on reasoning and produced no SVG. Budget for thinking 
 output must be machine-readable. The GIF capture renders 14 frames of the 1.4 s animation loop
 (10 fps); the SVG file animates natively on the GitHub file view.
 
-### Verified scope and caveats
+### Long-context spot checks
 
-- 256K-class retrieval spot checks: a 260,936-token haystack answers the planted mid-document
-  code correctly after the statistics-origin fix; a 100,091-token request completes in 412 s
-  with intact SSE/usage. Passing samples are **not** a 256K quality certification.
-- Default output budget 65,536; the engine emits until the model stops (observed 22,421 tokens);
-  a full 65,536-token single generation is not yet verified.
-- DFlash2 is not usable on this card with the current artifacts (VRAM + head format); MTP is the
-  supported speculative backend. Raw evidence lives in
-  [KVMMEM-PORT-NOTES.md](../KVMMEM-PORT-NOTES.md) and `runtime-logs/`.
+A 260,936-token haystack retrieved a planted mid-document code; a 100,091-token request
+completed in 412 seconds with intact SSE and usage. See the limitations below and the
+[Windows qualification notes](docs/windows/SWIFT-KVMEM.md) for the exact boundaries.
 
 ## Reproducing the measurements
 
@@ -210,22 +197,24 @@ tests/          C++ suites and the deterministic ActKV A/B harness
 - ActKV is an opt-in KVMem adaptation: the mean profile matches but does not beat the baseline,
   and the max aggregation regresses (table above). The engine default stays off; only the tested
   launcher profiles enable it.
-- DFlash2 is not usable on this card with the current artifacts (VRAM budget and selector-head
-  format); MTP is the supported speculative backend.
-- A full 65,536-token single generation has not been verified end to end; the default output
-  budget is 65,536 and generation stops when the model stops.
+- Swift ships without DFlash2 weights and uses MTP. A separate Qwen artifact passed a limited
+  6K-window DFlash2 test; large-window, vision and mixed MTP+DFlash operation are not qualified
+  ([details](docs/windows/SWIFT-KVMEM.md#dflash2-gguf-验证2026-10-11)).
+- An Engine benchmark generated 65,536 tokens with EOS stopping disabled. This proves the
+  tested execution budget, not arbitrary 65K API output or long-conversation quality; API
+  generation can finish earlier at EOS. Complex OCR/video and 24-hour stability are not qualified.
 - FFmpeg GPL shared-build binaries are not distributed until their complete corresponding source
   is assembled.
 
 ## When something goes wrong
 
 Include GPU model, driver, build revision, launch arguments and sanitized logs in issues. The
-repo's `development` notes record the exact commands and evidence for every verified claim.
+[Windows qualification notes](docs/windows/SWIFT-KVMEM.md), [ActKV results](docs/maintainer/actkv-reproduction.md), and [optimization audit](docs/maintainer/upstream-audit-20261013.md) record reproducible commands and validation boundaries. Raw logs remain local.
 
 ## Build
 
-Windows MSVC recipe: `development/ninfer-build/build-vision.bat` (VC 14.44, CUDA 12.8, Ninja) —
-see [V100 build notes](docs/V100-BUILD.md) for flags and upstream Linux builds.
+Follow the repository-relative commands in [Windows setup](docs/windows/SWIFT-KVMEM.md)
+(MSVC 14.44, CUDA 12.8, Ninja). [V100 build notes](docs/V100-BUILD.md) include the upstream Linux path.
 
 ## Upstream, artifacts and credits
 

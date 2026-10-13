@@ -7,21 +7,7 @@ KVMem NInfer 让你在**单卡 Tesla V100 16GB** 的 Windows 机器上跑 Qwen3.
 OpenAI/Anthropic 兼容 HTTP 服务、图片/视频输入，以及原生 GGUF 加载。本仓库是 NInfer 的
 **Windows/V100 KVMem 维护线**，所有结论来自 16GB 实机测量，不是纸面参数。
 
-## 想在 V100 上用 NInfer / KVMem / ActKV？
-
-这里是 **Windows + NVIDIA Tesla V100（sm_70）社区移植版**。如果上游构建面向更新的显卡，可以从这里开始。
-
-| 功能 | 本项目提供什么 |
-|---|---|
-| 硬件 | 单卡 Tesla V100 16GB、Windows、CUDA 12.8 |
-| 长上下文 | KVMem 将历史 KV 归档到主机内存；逻辑上限 262,144 tokens，GPU 保留有限窗口 |
-| 检索 | 可选 ActKV / LRFU、mean/max 聚合，附实测对照结果 |
-| 量化 | 原生加载支持范围内的 Qwen/Swift dense 27B GGUF K/IQ 格式，无需转换整个模型 |
-| Agent 客户端 | OpenAI / Anthropic API、MTP、工具头保护与视觉输入 |
-
-**[Windows 安装](docs/windows/SWIFT-KVMEM.md) · [原生 GGUF 范围](docs/maintainer/native-gguf-loading.md) · [ActKV 实测与启动](docs/maintainer/actkv-reproduction.md)**
-
-本项目是独立社区分支，上游署名见 [NOTICE](NOTICE.md)。GGUF 支持限定为文档列出的 Qwen/Swift dense 27B，不是任意架构。
+**[Windows 安装](docs/windows/SWIFT-KVMEM.md) · [原生 GGUF 范围](docs/maintainer/native-gguf-loading.md) · [ActKV 实测](docs/maintainer/actkv-reproduction.md)**
 
 ## 本项目做了什么
 
@@ -38,7 +24,7 @@ OpenAI/Anthropic 兼容 HTTP 服务、图片/视频输入，以及原生 GGUF �
   小窗口由 fresh 保底槽位兜底
   （[说明](docs/serving.md#actkv-action-oriented-retrieval-opt-in)）。
   [参考复现](docs/maintainer/actkv-reproduction.md)提供 mean 启动配置与原版 33 针/80 次工具测试，
-  Qwen mean 配置已通过同轮/最终33/33、80次工具调用、跨工具14/14；关闭的基线也满分。
+  Qwen mean 配置已通过同轮/最终 33/33、80 次工具调用、跨工具 14/14；关闭的基线也满分。
   mean 和 max 分开评估，目前没有优于基线的证据。
 - **原生 GGUF 加载** —— Qwen/Swift dense 27B `.gguf` 直接跑 CUDA 引擎，保留原始 K/IQ
   量化块：文本、内嵌 MTP、优化草稿头、搭配 `--mmproj` 的视觉，无需转换整个模型
@@ -83,6 +69,11 @@ print(r.choices[0].message.content)
 
 三个配置都提供同一套 HTTP 接口（Swift 生产用 8088，参考实例用 18200），模型名分别为
 `qwen3.8-27b` 与 `ninfer-27b`。
+
+Swift 启动器默认逻辑上下文 262,144、GPU KV 窗口 32,768、输出预算 65,536、思考预算 16,384 tokens。
+原生思考档位为 `low/medium/xhigh`；`minimal` 映射到 `low`、`high/max` 映射到 `xhigh`，`none` 关闭。
+客户端采样参数优先于默认值。`json_object` 是提示词约束，不保证严格 JSON；指定函数强制调用和
+`json_schema` 明确拒绝。完整参数见 [HTTP 服务指南](docs/serving.md)。
 
 ## 实测结果
 
@@ -130,14 +121,10 @@ bicycle … Return only the SVG code, no explanation."*
 可读时记得给思考留预算。GIF 以 10fps 捕捉 1.4 秒动画循环的 14 帧；SVG 文件在 GitHub 文件页可
 原生播放动画。
 
-### 验证范围与边界
+### 长上下文抽查
 
-- 256K 级检索抽查：统计起点修复后，260,936-token 干草堆能正确回答中段埋针；100,091-token
-  请求 412 秒完成、SSE/usage 完整。通过的样本**不构成** 256K 质量认证。
-- 默认输出预算 65,536；引擎生成到模型自行停止（实测 22,421 tokens）；完整 65,536
-  单次生成尚未验证。
-- DFlash2 在本卡与现有制品上不可用（显存 + 头格式），MTP 是受支持的投机后端。完整边界与
-  原始证据见 [KVMMEM-PORT-NOTES.md](../KVMMEM-PORT-NOTES.md) 与 `runtime-logs/`。
+260,936-token 中段埋针正确召回；100,091-token 请求 412 秒完成、SSE/usage 完整。
+验收边界见下方“限制与路线”和 [Windows 验证记录](docs/windows/SWIFT-KVMEM.md)。
 
 ## 复现方法
 
@@ -186,18 +173,20 @@ tests/         C++ 测试套件与确定性 ActKV A/B 夹具
   页面，不是对全部历史做完整注意力；通过的长上下文样本不构成 256K 质量认证。
 - ActKV 是可选的 KVMem 适配：mean 配置与基线持平而非超越，max 聚合会退化（见上表）。引擎
   默认关闭，只有经过测试的启动器配置才启用。
-- DFlash2 在本卡与现有制品上不可用（显存预算 + 选择头格式）；MTP 是受支持的投机后端。
-- 完整 65,536-token 单次生成尚未端到端验证；默认输出预算为 65,536，模型自行停止即结束。
+- Swift 不含 DFlash2 权重，生产使用 MTP。另一 Qwen 制品通过了 6K 窗口 DFlash2 初步测试，
+  尚未验收大窗口、视觉或 MTP+DFlash 混合运行；见 [Windows 验证记录](docs/windows/SWIFT-KVMEM.md)。
+- 关闭 EOS 停止的 Engine 基准已实际生成 65,536 tokens。这验证测试配置的执行预算，
+  不保证任意 API 请求写满 65K 或任意长对话质量；复杂 OCR/视频和 24 小时稳定性尚未全面验收。
 - FFmpeg GPL 共享构建二进制在补齐完整对应源码之前不对外分发。
 
 ## 出问题时提供什么
 
-请在 issue 中附显卡型号、驱动、构建版本、启动参数和脱敏日志。仓库的 `development` 笔记
-记录了每个已验证结论对应的命令与证据。
+请在 issue 中附显卡型号、驱动、构建版本、启动参数和脱敏日志。[Windows 验证记录](docs/windows/SWIFT-KVMEM.md)、[ActKV 实测](docs/maintainer/actkv-reproduction.md)和
+[优化审计](docs/maintainer/upstream-audit-20261013.md)提供复现命令与验收边界；原始日志留在本机。
 
 ## 构建
 
-Windows MSVC 配方：`development/ninfer-build/build-vision.bat`（VC 14.44、CUDA 12.8、Ninja）；
+使用 [Windows 安装指南](docs/windows/SWIFT-KVMEM.md)中的仓库相对构建命令（MSVC 14.44、CUDA 12.8、Ninja）；
 构建参数与上游 Linux 构建见 [V100 构建说明](docs/V100-BUILD.md)
 （[中文版](docs/V100-BUILD.zh-CN.md)）。
 

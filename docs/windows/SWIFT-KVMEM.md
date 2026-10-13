@@ -33,7 +33,25 @@ scripts\windows\start-swift15-256k.bat
 
 API：`http://127.0.0.1:8088/v1`；模型 `qwen3.8-27b`；未启用鉴权，客户端 key 可填 `local`。
 逻辑上下文 262144；GPU KV 窗口 32768；默认输出 65536（受输入长度及模型 EOS 限制）。
-MTP K=3、INT8 KV、vision 开启。KVMem 页面选择不是全量 256K 注意力。
+MTP K=3、INT8 KV、vision 开启，ActKV mean + fresh0.5 已启用；思考预算 16,384。
+GPU 窗口由 selected30,720 + reserve2,048 构成。KVMem 页面选择不是全量 256K 注意力。
+
+## 采样与思考默认值
+
+| 参数 | 开启思考 | 关闭思考 |
+|---|---:|---:|
+| temperature | 1.0 | 0.7 |
+| top_p | 0.95 | 0.80 |
+| top_k | 20 | 20 |
+| min_p | 0 | 0 |
+| presence_penalty | 0 | 1.5 |
+| frequency_penalty | 0 | 0 |
+
+原生思考档位是 low、medium、xhigh；minimal 映射 low，high/max 映射 xhigh，none 关闭。
+未指定档位时当前 Swift 模板使用 xhigh；各档思考长短不保证单调增加。
+请求参数覆盖采样默认值；WebUI 的 temperature=-1 表示使用默认，而非负温度采样。
+思考预算限制模型自产思考；强制收尾引导也计入 usage，因此 reasoning tokens 可略高于预算。
+接口约束与思考语义以 [serving.md](../serving.md) 为准。
 
 ## 实测与边界
 
@@ -48,7 +66,8 @@ Swift 图片 high/low 及 Responses low 均正确识别红色；low 282 vs high 
 修复统计逻辑起点、非对齐页统计、CUDA Graph 捕获内 scratch 分配及传输同步/历史恢复问题。
 相关独立 CUDA 数学与图生命周期测试通过。详细实现与协议见现有 docs/。
 
-未声称所有 256K 检索可靠、完整生成 65536 已验证、复杂 OCR/视频/音频全面验收。
+65,536-token Engine 连续生成已验证，具体条件见下文；不等于所有 API 请求写满或任意 256K 检索可靠。
+复杂 OCR/视频/音频没有全面验收。
 DFlash2 已完成本机初步适配和实机验证，见下节；Swift 当前制品没有 DFlash2 权重，正式配置仍使用 MTP。
 
 ActKV 检索参数（`--kvmem-action-lrfu`、`--kvmem-lrfu-lambda`、`--kvmem-lrfu-top-frac`、
@@ -126,3 +145,16 @@ Windows基准目标现统一链接静态CUDA runtime，避免重复符号；正�
 完成容量修复后，DFlash2的最终试跑配置将prefill从2048调为1024，保留6144窗口，
 避免按真实最坏路径预留工作区时超出16GB容量。启动后约598MiB空闲，算术回答正确且health200。
 上表是初次2048分块的历史A/B结果；当前Swift生产继续使用2048分块和32768窗口。
+
+## 2026-10-14 生产回归检查
+
+保持30720+2048 GPU窗口、Swift/MTP3、ActKV mean/fresh0.5和16384思考预算，不调整显存配置。
+
+- 五轮36,463–36,548-token历史回放全部回答正确；冷预填充72.83秒，后续1.41–2.47秒，缓存复用超过99%，包括修改后继问题和assistant后缀。
+- 两张512×512图片正确返回红、蓝顺序；此前low/high单图均识别正确。此测试不认证复杂OCR/视频。
+- Anthropic思考预算1024请求正常end_turn并返回thinking/text两块；usage为1048思考tokens（含收尾引导），引擎健康。
+- SSE客户端中断后0.312秒释放执行lane；随后Agent兼容探针22/22通过。
+- 工具解析、OpenAI Chat、Responses、Anthropic与Qwen runtime机制五项本地C++回归均exit0。
+- 上游优化091ee29的GitHub构建/测试编译CI成功。云runner无GPU，数值正确性由本机独立测试覆盖。
+
+本机证据保存在runtime-logs/maintenance-*，不随源码发布。此次未发现新增崩溃、缓存回放或基础视觉问题；不是全项目无bug或长期稳定性证明。

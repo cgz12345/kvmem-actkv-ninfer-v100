@@ -7,6 +7,7 @@ run the CLI or HTTP server.
 
 | Document | Purpose |
 |---|---|
+| [Windows / Swift setup](windows/SWIFT-KVMEM.md) | Windows V100 build, production defaults, supported artifacts and qualification limits |
 | [CLI](cli.md) | text, chat-history, image/video input, output streams, sampling, MTP, and common runtime options |
 | [HTTP serving](serving.md) | OpenAI Responses/Chat Completions, Anthropic Messages, state, streaming, token counting, authentication, and tool calls |
 | [Performance](performance.md) | RTX 5090 single-request and concurrent-decode results, MTP/DFlash measurements, and reproduction commands |
@@ -53,6 +54,7 @@ Runtime and Op references:
 - [Qwen3.8-27B DFlash2 algorithm core](maintainer/qwen3.8-27b-dflash2.md)
 - [Model and tool-call reliability comparison](maintainer/model-tool-comparison.md)
 - [Native GGUF loading scope and launcher](maintainer/native-gguf-loading.md)
+- [V100 optimization audit and numerical qualification](maintainer/upstream-audit-20261013.md)
 
 `engine-architecture.md` is the sole top-level Engine architecture reference.
 `resource-scheduling-and-context-cache.md` is its narrower authority for resource selection,
