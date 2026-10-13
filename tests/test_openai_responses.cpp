@@ -180,6 +180,18 @@ int test_budgets_and_nonsemantic_hints() {
                           "non-negative output budget accepted");
     }
 
+    {
+        // llama.cpp-style -1 = no limit: the budget becomes the whole context, the echo stays
+        // null, and the limit still counts as caller-chosen.
+        Json body                 = base;
+        body["max_output_tokens"] = -1;
+        const OpenAIResponsesCreateRequest parsed =
+            parse_openai_responses_create_request(body, limits());
+        failures += check(!parsed.requested_max_output_tokens && parsed.max_output_tokens_explicit &&
+                              parsed.prompt.generation.max_tokens == limits().max_context,
+                          "-1 output budget means no limit and is echoed as null");
+    }
+
     Json hints = base;
     hints.update({{"background", false},
                   {"client_metadata", Json{{"session_id", "session-1"}, {"trace", Json::array()}}},

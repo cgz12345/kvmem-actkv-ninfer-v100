@@ -1255,11 +1255,19 @@ OpenAIResponsesCreateRequest parse_openai_responses_create_request(const Json& b
         out.prompt.generation.sampling.top_p = *top_p;
     }
     if (const std::optional<int> max_output = optional_int(body, "max_output_tokens")) {
-        if (*max_output < 0) {
-            bad_request("max_output_tokens must be non-negative", "max_output_tokens");
+        if (*max_output < -1) {
+            bad_request("max_output_tokens must be non-negative, or -1 for no limit",
+                        "max_output_tokens");
         }
-        out.requested_max_output_tokens  = *max_output;
-        out.prompt.generation.max_tokens = *max_output;
+        if (*max_output == -1) {
+            // llama.cpp-style "no limit"; the response echoes null, OpenAI's spelling of the
+            // same thing. The engine still clamps to the context left after the prompt.
+            out.max_output_tokens_explicit  = true;
+            out.prompt.generation.max_tokens = limits.max_context;
+        } else {
+            out.requested_max_output_tokens  = *max_output;
+            out.prompt.generation.max_tokens = *max_output;
+        }
     }
     return out;
 }

@@ -266,7 +266,8 @@ void HttpServer::handle_responses(const httplib::Request& req, httplib::Response
     const RequestLogMetadata metadata{
         .model                             = request.prompt.model,
         .stream                            = request.stream,
-        .output_tokens_explicit            = request.requested_max_output_tokens.has_value(),
+        .output_tokens_explicit            = request.requested_max_output_tokens.has_value() ||
+                                             request.max_output_tokens_explicit,
         .preserve_thinking_semantic_change = resolved.preserve_thinking_semantic_change,
     };
     PreparedRequest prepared;

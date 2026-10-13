@@ -46,6 +46,9 @@ struct OpenAIResponsesCreateRequest {
     // boundary. Never infer a namespace by splitting an Engine function name.
     std::unordered_map<std::string, OpenAIResponsesFunctionIdentity> tool_identities;
     std::optional<int> requested_max_output_tokens;
+    // -1 means explicit "no limit"; it is echoed as null but still marks the budget as
+    // caller-chosen so the service default does not take over.
+    bool max_output_tokens_explicit = false;
     std::optional<int> max_tool_calls;
     bool parallel_tool_calls = true;
     bool store               = true;

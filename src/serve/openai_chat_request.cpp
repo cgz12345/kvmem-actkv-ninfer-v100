@@ -136,10 +136,14 @@ void validate_standard_output_controls(const Json& body) {
         if (!format.is_object() || !format.contains("type") || !format.at("type").is_string()) {
             bad_request("response_format must contain a string type", "response_format");
         }
-        if (format.at("type").get<std::string>() != "text") {
+        const std::string type = format.at("type").get<std::string>();
+        // "json_object" needs no grammar: it is honored as an instruction-level hint (the
+        // OpenAI wire value for "answer with JSON"). "json_schema" would require constrained
+        // decoding, which the engine does not implement, so it stays an explicit rejection.
+        if (type != "text" && type != "json_object") {
             bad_request(
                 "this response_format requires constrained output, which NInfer cannot guarantee; "
-                "only {\"type\":\"text\"} is available",
+                "{\"type\":\"text\"} and {\"type\":\"json_object\"} are available",
                 "response_format", "response_format_not_supported");
         }
     }
@@ -908,6 +912,32 @@ void parse_stream_options(const Json& body, OpenAIChatRequest& output) {
     }
 }
 
+// response_format {"type":"json_object"} is an instruction-level contract in this server: the
+// engine has no constrained decoder, so the hint is applied as a trailing instruction on the
+// leading system turn (or a new leading system turn). The instruction is stable across turns,
+// so prompt-prefix reuse keeps working for clients that send response_format every time.
+void apply_json_object_hint(GenerationRequest& request) {
+    static constexpr std::string_view kHint = "\n\nRespond with a single valid JSON object and no other text.";
+    auto& messages = request.messages;
+    if (!messages.empty() &&
+        (messages.front().role == ChatRole::System ||
+         messages.front().role == ChatRole::Developer)) {
+        for (ContentPart& part : messages.front().content) {
+            if (part.kind == ContentKind::Text) {
+                part.text += kHint;
+                return;
+            }
+        }
+    }
+    ChatTurn turn;
+    turn.role = ChatRole::System;
+    ContentPart part;
+    part.kind = ContentKind::Text;
+    part.text = std::string(kHint.substr(2));
+    turn.content.push_back(std::move(part));
+    messages.insert(messages.begin(), std::move(turn));
+}
+
 void parse_response_observations(const Json& body, OpenAIChatRequest& output) {
     output.timings_per_token = get_bool(body, "timings_per_token", false);
     output.return_progress   = get_bool(body, "return_progress", false);
@@ -960,6 +990,12 @@ OpenAIChatRequest parse_chat_completion_request(const Json& body, const RequestL
     parse_tool_choice(body, output.generation);
     parse_parallel_tool_calls(body, output.generation);
     parse_messages(body, output.generation);
+    if (body.contains("response_format") && body.at("response_format").is_object() &&
+        body.at("response_format").contains("type") &&
+        body.at("response_format").at("type").is_string() &&
+        body.at("response_format").at("type").get<std::string>() == "json_object") {
+        apply_json_object_hint(output.generation);
+    }
     settle_image_details(output.generation.messages, limits, "messages", "image_url.detail");
     parse_stop(body, output.generation);
     parse_sampling(body, output.generation);

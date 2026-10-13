@@ -9072,6 +9072,17 @@ runtime::ExecutionTiming ProgramImplCore::append_forced_tokens(
                 if (is_masked_draft_backend(speculative_backend)) {
                     mark_workspace_usage(workspace_plan.dflash_context);
                 }
+                const std::uint32_t chunk_begin = cursor;
+                if (kvmem_window_tokens) {
+                    // Forced control tokens (the reasoning-budget close) advance KV exactly like
+                    // a prefill chunk; the statistics store must follow them, or the next
+                    // speculative commit fails its committed-prefix check. The query span is
+                    // unchanged, so query sums stay untouched by these non-query tokens.
+                    prepare_memory_statistics(sequence, sequence.window.query_begin,
+                                              sequence.window.query_end);
+                    schedule_state.execution.memory_statistics =
+                        memory_statistics ? &*memory_statistics : nullptr;
+                }
                 const schedule::PrefillChunkResult result = schedule::prefill_text_chunk(
                     schedule_state, sequence.ledger, count, std::nullopt, false);
                 if (result.finalized || result.processed_tokens == 0 ||
@@ -9086,6 +9097,9 @@ runtime::ExecutionTiming ProgramImplCore::append_forced_tokens(
                     sequence.dflash_context_frontier = cursor;
                 }
                 commit_sequence_kv(sequence, sequence.text_kv_valid, backend_kv_valid(sequence));
+                if (kvmem_window_tokens) {
+                    commit_memory_statistics(sequence, chunk_begin, cursor);
+                }
                 settle_state_fork(sequence);
                 copy_tail(sequence,
                           prefill_hidden.slice(

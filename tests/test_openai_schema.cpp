@@ -239,6 +239,19 @@ int test_standard_field_policy() {
     const OpenAIChatRequest zero        = parse(zero_limit);
     failures += check(zero.output_tokens_explicit && zero.generation.max_tokens == 0,
                       "an explicit zero output limit reaches Engine's no-generation path");
+
+    // response_format {"type":"json_object"} is an instruction-level hint: it leads the prompt
+    // with a system turn carrying the JSON instruction, and it is stable across turns.
+    Json json_object                       = base_request();
+    json_object["response_format"]         = Json{{"type", "json_object"}};
+    const OpenAIChatRequest json_parsed    = parse(json_object);
+    const auto& json_messages              = json_parsed.generation.messages;
+    failures += check(json_messages.size() == 2 &&
+                          json_messages.front().role == ninfer::ChatRole::System &&
+                          !json_messages.front().content.empty() &&
+                          json_messages.front().content.front().text.find("valid JSON") !=
+                              std::string::npos,
+                      "json_object accepted and applied as a leading system instruction");
     return failures;
 }
 

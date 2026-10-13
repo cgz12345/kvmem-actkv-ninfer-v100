@@ -114,7 +114,12 @@ The endpoint supports:
   candidates, so a wider `top_k` (llama.cpp clients commonly default to 40) is clamped to 20 while
   a negative `top_k` is rejected;
 - up to four non-empty stop strings, applied to both reasoning and answer output;
-- `n:1`, text-only `modalities`, and `response_format: {"type":"text"}`;
+- `n:1`, text-only `modalities`, and `response_format` of `{"type":"text"}` or
+  `{"type":"json_object"}`. `json_object` needs no constrained decoder: it is honored as an
+  instruction-level hint by leading the prepared prompt with a stable system instruction
+  ('Respond with a single valid JSON object and no other text.'), so prefix reuse keeps
+  working across turns. It is a contract request, not a grammar guarantee; `json_schema`
+  still fails with `response_format_not_supported`;
 - non-streaming responses and server-sent event streams;
 - `stream_options.include_usage`;
 - llama.cpp-compatible terminal `timings`, plus opt-in `timings_per_token` and
@@ -423,7 +428,7 @@ wire response contains typed `output` Items.
 | `input` | string or typed Item array; it may be omitted or empty only when `previous_response_id` already supplies a user query |
 | `instructions` | optional string, inserted before the reconstructed conversation for this request only |
 | `previous_response_id` | optional ID of a retained local Response |
-| `max_output_tokens` | non-negative integer; omission executes with `--default-max-tokens` but remains `null` in the Response object |
+| `max_output_tokens` | non-negative integer, or `-1` for "no limit" (the whole remaining context, llama.cpp spelling); omission executes with `--default-max-tokens`; both omission and `-1` remain `null` in the Response object |
 | `stream` | boolean; `true` selects Responses SSE rather than a JSON body |
 | `store` | boolean, default `true`; controls local retrieval and continuation state |
 | `temperature` | finite number in `[0,2]` |
