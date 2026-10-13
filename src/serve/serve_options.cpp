@@ -117,6 +117,8 @@ std::string serve_usage_text(const char* argv0) {
            "       --kvmem-lrfu-lambda F sets the LRFU decay, 0 < F < 1 (default 0.50)\n"
            "       --kvmem-lrfu-top-frac F keeps the top hit fraction per round, "
            "0 < F <= 1 (default 0.90)\n"
+           "       --kvmem-lrfu-fresh-frac F reserves that share of the retrieved slots "
+           "for the current round's ranking, 0 <= F <= 1 (default 0)\n"
            "       --kvmem-score-agg mean|max selects GQA query aggregation (default mean)\n"
            "       sampler defaults come from the loaded model and resolved thinking mode; "
            "server flags and request fields override individual values.\n"
@@ -310,6 +312,9 @@ ServeOptions parse_serve_options(int argc, char** argv) {
             if (!(options.kvmem.lrfu_top_frac > 0.0F)) {
                 throw std::invalid_argument("--kvmem-lrfu-top-frac must be in (0, 1]");
             }
+        } else if (arg == "--kvmem-lrfu-fresh-frac") {
+            options.kvmem.lrfu_fresh_frac = parse_float_in(
+                require_value("--kvmem-lrfu-fresh-frac"), "kvmem-lrfu-fresh-frac", 0.0F, 1.0F);
         } else if (arg == "--kvmem-score-agg") {
             // require_value() returns a const char*: bind it to a view before
             // comparing, or != compares pointers and every value is rejected.

@@ -2,6 +2,7 @@
 #include "kvmem/memory_contract.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
@@ -766,26 +767,52 @@ std::vector<uint32_t> KvMemStore::pick_topk_ungrouped(
 
     // Fill the rest with the highest cumulative-attention middle blocks.
     if (kept_count < budget) {
-        std::vector<uint32_t> candidates;
-        candidates.reserve(n - kept_count);
-        for (uint32_t i = 0; i < n; ++i) {
-            if (!kept[i]) candidates.push_back(i);
-        }
         const uint32_t need = budget - kept_count;
-        // Partial sort by attn_score desc; tie-break by recency (higher id) so
-        // selection is deterministic.
-        auto better = [&](uint32_t a, uint32_t b) {
-            if (blocks_[a].attn_score != blocks_[b].attn_score) {
-                return blocks_[a].attn_score > blocks_[b].attn_score;
-            }
-            return a > b;
-        };
-        if (need < candidates.size()) {
-            std::nth_element(candidates.begin(), candidates.begin() + need,
-                             candidates.end(), better);
-            candidates.resize(need);
+        // ActKV fresh-match reservation (--kvmem-lrfu-fresh-frac). With the keep
+        // score on, the incumbents' accumulated KS can occupy every retrieved
+        // slot and push out the pages the CURRENT query matches best -- measured
+        // on the V100 A/B (KVMMEM-PORT-NOTES.md section 35). Reserving a share of
+        // the slots for this round's one-shot ranking keeps the temporal
+        // retention while guaranteeing current matches can enter.
+        uint32_t fresh = 0;
+        if (cfg_.action_lrfu && cfg_.lrfu_fresh_frac > 0.0f) {
+            fresh = static_cast<uint32_t>(std::lround(
+                static_cast<double>(need) * static_cast<double>(cfg_.lrfu_fresh_frac)));
+            if (fresh > need) fresh = need;
         }
-        for (uint32_t id : candidates) keep(id);
+        // Partial sort by one score, tie-break by recency (higher id) so
+        // selection is deterministic.
+        const auto take_by = [&](uint32_t count, auto allow, auto score_of) {
+            if (count == 0) return;
+            std::vector<uint32_t> pool;
+            pool.reserve(n - kept_count);
+            for (uint32_t i = 0; i < n; ++i) {
+                if (!kept[i] && allow(blocks_[i])) pool.push_back(i);
+            }
+            if (pool.empty()) return;
+            const uint32_t take = std::min<uint32_t>(
+                count, static_cast<uint32_t>(pool.size()));
+            const auto better = [&](uint32_t a, uint32_t b) {
+                const double sa = score_of(blocks_[a]);
+                const double sb = score_of(blocks_[b]);
+                if (sa != sb) return sa > sb;
+                return a > b;
+            };
+            if (take < pool.size()) {
+                std::nth_element(pool.begin(), pool.begin() + take, pool.end(), better);
+                pool.resize(take);
+            }
+            for (uint32_t id : pool) keep(id);
+        };
+        const auto any      = [](const KvMemBlock &) { return true; };
+        const auto positive = [](const KvMemBlock &b) { return b.retrieval_score > 0.0; };
+        const auto by_attn  = [](const KvMemBlock &b) { return b.attn_score; };
+        const auto by_retr  = [](const KvMemBlock &b) { return b.retrieval_score; };
+        take_by(need - fresh, any, by_attn);
+        // Positive evidence only, mirroring the hit rule; the fallback below
+        // fills the slot with the keep-score ranking if nothing matches.
+        take_by(fresh, positive, by_retr);
+        take_by(budget - kept_count, any, by_attn);
     }
 
     selected.reserve(kept_count);

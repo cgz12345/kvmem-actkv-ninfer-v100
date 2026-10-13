@@ -269,6 +269,14 @@ struct KvMemStoreConfig {
     // that cannot report a selection leave it off and keep the score-only rule.
     // The ninfer window backend sets this at selector construction.
     bool   deferred_lrfu = false;
+    // Share of the retrieved slots (after sink/recent/mandatory) that must come
+    // from the CURRENT round's one-shot ranking instead of the keep score.
+    // Without it, accumulated KS can occupy every retrieved slot under a small
+    // budget and push out the pages the current query matches best. 0 keeps the
+    // upstream single-ranking fill; 1 is the historical one-shot fill with the
+    // keep score still accumulating in the background. Only consulted while
+    // action_lrfu is on.
+    float  lrfu_fresh_frac = 0.0f;   // --kvmem-lrfu-fresh-frac
 
     KvMemMethod select_method = KvMemMethod::Retrieval; // --kvmem-method
     KvMemSelectPolicy select_policy = KvMemSelectPolicy::TopK;

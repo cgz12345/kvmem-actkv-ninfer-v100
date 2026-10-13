@@ -874,6 +874,13 @@ make_sequence_planner_impl(DeviceContext& device, const EngineOptions& options,
             throw std::invalid_argument(
                 "KVMem ActKV requires lrfu lambda in (0,1) and top-frac in (0,1]");
         }
+        if (kvmem.lrfu_fresh_frac < 0.0f || kvmem.lrfu_fresh_frac > 1.0f) {
+            throw std::invalid_argument("KVMem lrfu fresh fraction must be in [0,1]");
+        }
+        if (kvmem.lrfu_fresh_frac != 0.0f && !kvmem.action_lrfu) {
+            throw std::invalid_argument(
+                "KVMem lrfu fresh fraction requires --kvmem-action-lrfu");
+        }
         const std::uint64_t window = kvmem.device_tokens();
         if (window > options.max_context || kvmem.selected_tokens < 128 ||
             kvmem.selected_tokens % 64 != 0 || kvmem.reserve_tokens < 64 ||
@@ -890,7 +897,7 @@ make_sequence_planner_impl(DeviceContext& device, const EngineOptions& options,
         kvmem_window_tokens = static_cast<std::uint32_t>(window);
     } else if (options.kvmem.reserve_tokens || options.kvmem.host_bytes ||
                options.kvmem.verify_transfers || options.kvmem.action_lrfu ||
-               options.kvmem.score_agg != 0) {
+               options.kvmem.score_agg != 0 || options.kvmem.lrfu_fresh_frac != 0) {
         throw std::invalid_argument(
             "KVMem reserve/host/ActKV options require selected tokens");
     }

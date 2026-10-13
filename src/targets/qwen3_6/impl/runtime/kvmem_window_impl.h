@@ -1177,6 +1177,7 @@ void ProgramImplCore::prepare_memory_statistics(SequenceState& sequence,
         selection.action_lrfu = kvmem_options.action_lrfu;
         selection.lrfu_lambda = kvmem_options.lrfu_lambda;
         selection.lrfu_top_frac = kvmem_options.lrfu_top_frac;
+        selection.lrfu_fresh_frac = kvmem_options.lrfu_fresh_frac;
         // This backend scores first and selects afterwards (set_retrieval_scores,
         // then pick_topk_blocks), so the keep score must be committed once the
         // selection exists -- otherwise a block grows on a score it never won a

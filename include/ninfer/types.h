@@ -179,6 +179,11 @@ struct KvmemOptions {
     bool action_lrfu = false;         // --kvmem-action-lrfu
     float lrfu_lambda = 0.5F;         // --kvmem-lrfu-lambda
     float lrfu_top_frac = 0.9F;       // --kvmem-lrfu-top-frac
+    // Share of the retrieved KVMem slots that must follow the current round's
+    // one-shot ranking instead of the accumulated keep score. 0 keeps the
+    // upstream ActKV fill; 0.5 keeps the retention without letting incumbents
+    // lock the window under a small budget. Only consulted with action_lrfu.
+    float lrfu_fresh_frac = 0.0F;     // --kvmem-lrfu-fresh-frac
     // ActKV Alg. 3 step 8: how a GQA group's query heads are combined while
     // scoring. 0 = folded mean (historical), 1 = max over the group.
     int score_agg = 0;                // --kvmem-score-agg mean|max

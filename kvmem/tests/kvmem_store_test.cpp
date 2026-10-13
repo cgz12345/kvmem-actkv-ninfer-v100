@@ -1305,6 +1305,60 @@ static void test_lrfu_changes_selection_order() {
     CHECK(std::find(picked2.begin(), picked2.end(), 5u) == picked2.end());
 }
 
+// Fresh-match reservation: an incumbent whose accumulated KS outranks every
+// current score must not occupy the whole retrieved budget. With
+// lrfu_fresh_frac > 0 a share of the slots follows the current round's one-shot
+// ranking, so the just-relevant block still enters.
+static void test_lrfu_fresh_frac_reserves_current_matches() {
+    KvMemStoreConfig cfg; cfg.block_tokens = 128;
+    cfg.select_budget = 128 * 3;   // sink(1) + two retrieved slots
+    cfg.sink_blocks = 1;
+    cfg.recent_blocks = 0;
+    cfg.action_lrfu = true; cfg.lrfu_lambda = 0.5f; cfg.lrfu_top_frac = 1.0f;
+    // Two rounds of evidence for blocks 3..5: KS = 1.5 each, so their
+    // provisional ranking (lambda * KS = 0.75) beats block 6's current 0.6 --
+    // with two slots they fill the retrieved budget completely.
+    auto seed = [](KvMemStore &s) {
+        s.register_append(128 * 8);
+        s.set_retrieval_scores({0, 0, 0, 1.0, 1.0, 1.0, 0.0, 0}, 1);
+        s.set_retrieval_scores({0, 0, 0, 1.0, 1.0, 1.0, 0.0, 0}, 2);
+    };
+    KvMemStore s(cfg);
+    seed(s);
+    s.set_retrieval_scores({0, 0, 0, 0, 0, 0.0, 0.6, 0}, 3);
+    auto picked = s.pick_topk_blocks();          // upstream fill: block 6 out
+    CHECK(std::find(picked.begin(), picked.end(), 5u) != picked.end());
+    CHECK(std::find(picked.begin(), picked.end(), 6u) == picked.end());
+
+    KvMemStoreConfig fresh = cfg; fresh.lrfu_fresh_frac = 0.5f;
+    KvMemStore f(fresh);
+    seed(f);
+    f.set_retrieval_scores({0, 0, 0, 0, 0, 0.0, 0.6, 0}, 3);
+    auto picked_fresh = f.pick_topk_blocks();    // one slot reserved: both enter
+    CHECK(picked_fresh.size() == 3);
+    CHECK(std::find(picked_fresh.begin(), picked_fresh.end(), 5u) != picked_fresh.end());
+    CHECK(std::find(picked_fresh.begin(), picked_fresh.end(), 6u) != picked_fresh.end());
+}
+
+// The reservation must never leave the budget short when the current round has
+// no positive evidence: the fallback fills those slots from the keep score.
+static void test_lrfu_fresh_frac_falls_back_without_evidence() {
+    KvMemStoreConfig cfg; cfg.block_tokens = 128;
+    cfg.select_budget = 128 * 3;
+    cfg.sink_blocks = 1;
+    cfg.recent_blocks = 0;
+    cfg.action_lrfu = true; cfg.lrfu_lambda = 0.5f; cfg.lrfu_top_frac = 0.90f;
+    cfg.lrfu_fresh_frac = 1.0f;
+    KvMemStore s(cfg);
+    s.register_append(128 * 8);
+    s.set_retrieval_scores({0, 0, 0, 0, 0, 0.7, 0.8, 0}, 1);   // blocks 5 and 6
+    s.set_retrieval_scores({0, 0, 0, 0, 0, 0.0, 0.0, 0.0}, 2); // nothing matches
+    auto picked = s.pick_topk_blocks();
+    CHECK(picked.size() == 3);                   // sink + the two KS leaders
+    CHECK(std::find(picked.begin(), picked.end(), 5u) != picked.end());
+    CHECK(std::find(picked.begin(), picked.end(), 6u) != picked.end());
+}
+
 int main() {
     test_media_suffix_over_budget();
     test_media_groups_with_shared_boundary();
@@ -1350,6 +1404,8 @@ int main() {
     test_lrfu_round_without_evidence_only_decays();
     test_lrfu_reset_clears_keep_scores();
     test_lrfu_changes_selection_order();
+    test_lrfu_fresh_frac_reserves_current_matches();
+    test_lrfu_fresh_frac_falls_back_without_evidence();
 
     if (g_fail != 0) {
         std::printf("FAILED: %d check(s)\n", g_fail);
