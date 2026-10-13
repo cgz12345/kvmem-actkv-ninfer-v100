@@ -28,5 +28,8 @@ set PATH=%CUDA_PATH%\bin;%PATH%
   --kvmem-sink 5120 --kvmem-recent 64 ^
   --kvmem-host-mib 12288 --kvmem-retained 4 ^
   --vision ^
+  rem Tested ActKV profile for this artifact: LRFU with mean aggregation and the
+  rem small-window fresh-slot mitigation (docs/maintainer/actkv-reproduction.md).
+  --kvmem-action-lrfu --kvmem-score-agg mean --kvmem-lrfu-fresh-frac 0.5 ^
   --cors ^
   --log-level info

@@ -1,4 +1,4 @@
-# KVMem NInfer · Windows V100 · Qwen3.8-27B (Swift-1.5)
+# NInfer for V100 — KVMem, ActKV & native GGUF
 
 **English** | [简体中文](README.zh-CN.md)
 
@@ -7,6 +7,22 @@ finetune, MTP included) on a single **Tesla V100 16 GB** under Windows, with a h
 working set, OpenAI/Anthropic-compatible HTTP serving, image/video input, and a native GGUF
 loader. It is the Windows/V100 KVMem line of the [NInfer](#upstream-artifacts-and-credits)
 engine, maintained from real 16 GB measurements, not paper specs.
+
+## Looking for NInfer / KVMem / ActKV on V100?
+
+This community port is for **Windows + NVIDIA Tesla V100 (sm_70)**. Start here if the upstream build targets newer GPUs.
+
+| Capability | What you can use here |
+|---|---|
+| Hardware | Single Tesla V100 16 GB, Windows, CUDA 12.8 |
+| Long context | KVMem host KV archive; up to 262,144 logical tokens with a bounded GPU window |
+| Retrieval | Optional ActKV / LRFU, mean or max aggregation; documented A/B results |
+| Quantization | Native supported Qwen/Swift dense 27B GGUF K/IQ formats; no whole-model conversion |
+| Agent clients | OpenAI / Anthropic APIs, MTP, tool-header preservation, vision |
+
+**[Windows setup](docs/windows/SWIFT-KVMEM.md) · [Native GGUF support](docs/maintainer/native-gguf-loading.md) · [ActKV results and launcher](docs/maintainer/actkv-reproduction.md)**
+
+This is an independent community fork. Credit and upstream links: [NOTICE](NOTICE.md). The supported GGUF scope is Qwen/Swift dense 27B, not arbitrary architectures.
 
 ## What this project adds
 
@@ -44,8 +60,8 @@ engine, maintained from real 16 GB measurements, not paper specs.
 ## Quick start
 
 ```powershell
-git clone https://github.com/cgz12345/kvmem-ninfer-v100.git
-cd kvmem-ninfer-v100
+git clone https://github.com/cgz12345/kvmem-actkv-ninfer-v100.git
+cd kvmem-actkv-ninfer-v100
 ```
 
 1. Set up Windows, Visual Studio C++, CUDA 12.8, CMake, Ninja and the vision dependencies
@@ -65,17 +81,57 @@ r = client.chat.completions.create(
 print(r.choices[0].message.content)
 ```
 
-## Verified scope
+## Measured results
 
-- Swift IQ3_S, MTP K=3, int8 KV, 32K window / 2048 prefill, vision on: 4030-in / 256-out twice at
-  **96.6 tok/s decode**; MTP acceptance 86%; canary and multi-round history replay pass.
+The numbers below come from this card (Tesla V100 16 GB, Windows, CUDA 12.8) and the binaries in
+this repository; raw logs stay local in `runtime-logs/`.
+
+### ActKV reference reproduction
+
+The [reference profile](docs/maintainer/actkv-reproduction.md) runs the community author's own
+harness ([tools/bench/actkv/niah33.py](tools/bench/actkv/niah33.py)): 15 write rounds, 33 needles,
+a final recall sweep and cross-tool checks over a 258,202-token session on the
+Qwen3.8-27B GSQ-RCO IQ3_S artifact. Acceptance is exit 0 = 33/33 same-turn, 33/33 strict final,
+14/14 cross-tool, at least 80 tool calls:
+
+| Configuration | Immediate recall | Strict final | Tool calls | Cross-tool |
+|---|---:|---:|---:|---:|
+| Baseline, LRFU off | 33/33 | 33/33 | 80 | 14/14 |
+| **ActKV LRFU, mean aggregation** | **33/33** | **33/33** | **80** | **14/14** |
+| ActKV LRFU, max aggregation | 28/33 | 30/33 | 67 | 6/14 |
+
+The mean profile reproduces the community result exactly on this fixture; the max aggregation
+regresses. The engine keeps ActKV off by default and the shipped launchers enable only tested
+profiles ([start-actkv-256k.bat](scripts/windows/start-actkv-256k.bat) for the reference
+artifact, `start-swift15-256k.bat` for Swift below). No speed or accuracy advantage over the
+baseline is established.
+
+### Swift-1.5 production profile (ActKV mean + fresh-frac 0.5 enabled)
+
+- 4030-in / 256-out, twice, no cache: **96.6 tok/s decode**, ~570 tok/s prefill, MTP acceptance 86%.
+- Multi-round history reuse restores >99% cached tokens; 36K and 260K session canaries pass.
+- Launched by `scripts/windows/start-swift15-256k.bat`: KVMem 30720+2048, sink 5120, recent 64,
+  vision, MTP K=3, int8 KV, plus the ActKV mean profile with `--kvmem-lrfu-fresh-frac 0.5`.
+
+### Pelican SVG test (local ActKV-enabled service)
+
+![Pelican riding a bicycle](docs/assets/pelican-bicycle.png)
+
+Prompt "Generate an SVG of a pelican riding a bicycle" with `reasoning_effort: none` and
+`max_tokens 16384`: **1,756 output tokens in 18.8 s (96.0 tok/s decode), finish=stop**. Raw SVG:
+[docs/assets/pelican-bicycle.svg](docs/assets/pelican-bicycle.svg). With the default thinking mode
+the same request spent an entire 8,192-token budget on reasoning and produced no SVG — budget for
+thinking whenever the output must be machine-readable.
+
+### Verified scope and caveats
+
 - 256K-class retrieval spot checks: a 260,936-token haystack answers the planted mid-document
   code correctly after the statistics-origin fix; a 100,091-token request completes in 412 s
-  with intact SSE/usage. Three passing samples are **not** a 256K quality certification.
+  with intact SSE/usage. Passing samples are **not** a 256K quality certification.
 - Default output budget 65,536; the engine emits until the model stops (observed 22,421 tokens);
   a full 65,536-token single generation is not yet verified.
 - DFlash2 is not usable on this card with the current artifacts (VRAM + head format); MTP is the
-  supported speculative backend. Drive-by caveats and all raw evidence live in
+  supported speculative backend. Raw evidence lives in
   [KVMMEM-PORT-NOTES.md](../KVMMEM-PORT-NOTES.md) and `runtime-logs/`.
 
 ## When something goes wrong
