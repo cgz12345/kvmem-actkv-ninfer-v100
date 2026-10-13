@@ -129,28 +129,21 @@ baseline is established.
 
 ### Animated pelican test
 
-Both local profiles generated an animated "pelican riding a bicycle" SVG (SMIL animation: wheels
-spinning, legs pedaling, gentle bobbing). Prompt: *"Draw a beautiful, lively animated SVG of a
-pelican riding a bicycle … Return only the SVG code, no explanation."*
+The local production profile generated an animated "pelican riding a bicycle" SVG (SMIL
+animation: wheels spinning, legs pedaling, gentle bobbing). Prompt: *"Draw a beautiful, lively
+animated SVG of a pelican riding a bicycle … Return only the SVG code, no explanation."*
 
-| Run | Artifact | Thinking | Output tokens | Wall time | Decode |
-|---|---|---|---:|---:|---:|
-| [Swift-1.5 animated pelican](docs/assets/pelican-swift-bicycle.svg) | Swift-1.5 IQ3_S (production profile) | `reasoning_effort: high` (16,421 reasoning) | 21,843 | 293.8 s | 74.7 tok/s |
-| [Qwen3.8-27B animated pelican](docs/assets/pelican-qwen-bicycle.svg) | Qwen3.8-27B GSQ-RCO IQ3_S (ActKV reference profile) | `reasoning_effort: medium` (1,181 reasoning) | 4,515 | 57.6 s | 79.6 tok/s |
+| Artifact | Thinking | Output tokens | Wall time | Decode |
+|---|---|---:|---:|---:|
+| [Swift-1.5 IQ3_S](docs/assets/pelican-swift-bicycle.svg), production profile | `reasoning_effort: high` (16,421 reasoning) | 21,843 | 293.8 s | 74.7 tok/s |
 
-![Animated pelican on a bicycle, Swift-1.5](docs/assets/pelican-swift-bicycle.gif)
-
-*Swift-1.5, thinking-enabled run.*
-
-![Animated pelican on a bicycle, Qwen3.8-27B](docs/assets/pelican-qwen-bicycle.gif)
-
-*Qwen3.8-27B GSQ-RCO, ActKV reference profile.*
+![Animated pelican on a bicycle](docs/assets/pelican-swift-bicycle.gif)
 
 Context for the numbers: with `reasoning_effort: none` the first, non-animated version completed
 in 18.8 s / 1,756 tokens at 96.0 tok/s; with the default thinking mode the same request spent an
 entire 8,192-token budget on reasoning and produced no SVG. Budget for thinking whenever the
-output must be machine-readable. The GIF captures render 14 frames of the 1.4 s animation loop
-(10 fps); the SVG files animate natively on the GitHub file view.
+output must be machine-readable. The GIF capture renders 14 frames of the 1.4 s animation loop
+(10 fps); the SVG file animates natively on the GitHub file view.
 
 ### Verified scope and caveats
 

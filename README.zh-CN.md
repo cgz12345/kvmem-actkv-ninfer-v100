@@ -115,22 +115,15 @@ Swift 见下）。**没有证据表明 ActKV 比基线更快或更准。**
 
 ### 动画鹈鹕测试
 
-两个本地配置各生成了一个"会动的鹈鹕骑自行车"SVG（SMIL 动画：车轮持续旋转、双腿蹬踏、
+本地生产配置生成了一个"会动的鹈鹕骑自行车"SVG（SMIL 动画：车轮持续旋转、双腿蹬踏、
 车身轻微起伏）。提示词：*"Draw a beautiful, lively animated SVG of a pelican riding a
 bicycle … Return only the SVG code, no explanation."*
 
-| 运行 | 制品 | 思考 | 输出 tokens | 耗时 | Decode |
-|---|---|---|---:|---:|---:|
-| [Swift-1.5 动画鹈鹕](docs/assets/pelican-swift-bicycle.svg) | Swift-1.5 IQ3_S（生产配置） | `reasoning_effort: high`（其中 16,421 推理） | 21,843 | 293.8 秒 | 74.7 tok/s |
-| [Qwen3.8-27B 动画鹈鹕](docs/assets/pelican-qwen-bicycle.svg) | Qwen3.8-27B GSQ-RCO IQ3_S（ActKV 参考配置） | `reasoning_effort: medium`（其中 1,181 推理） | 4,515 | 57.6 秒 | 79.6 tok/s |
+| 制品 | 思考 | 输出 tokens | 耗时 | Decode |
+|---|---|---:|---:|---:|
+| [Swift-1.5 IQ3_S](docs/assets/pelican-swift-bicycle.svg)（生产配置） | `reasoning_effort: high`（其中 16,421 推理） | 21,843 | 293.8 秒 | 74.7 tok/s |
 
-![会动的鹈鹕，Swift-1.5](docs/assets/pelican-swift-bicycle.gif)
-
-*Swift-1.5，开启思考的生成结果。*
-
-![会动的鹈鹕，Qwen3.8-27B](docs/assets/pelican-qwen-bicycle.gif)
-
-*Qwen3.8-27B GSQ-RCO，ActKV 参考配置。*
+![会动的鹈鹕](docs/assets/pelican-swift-bicycle.gif)
 
 数字的背景：同提示词 `reasoning_effort: none` 时第一版（静态）18.8 秒 / 1756 tokens / 96.0 tok/s
 完成；默认思考模式下同一请求会把 8192 token 预算全部花在推理上、没有产出 SVG——输出需要机器
