@@ -51,6 +51,12 @@ Swift 图片 high/low 及 Responses low 均正确识别红色；low 282 vs high 
 未声称所有 256K 检索可靠、完整生成 65536 已验证、复杂 OCR/视频/音频全面验收。
 DFlash2 已完成本机初步适配和实机验证，见下节；Swift 当前制品没有 DFlash2 权重，正式配置仍使用 MTP。
 
+可选的 ActKV 检索参数（`--kvmem-action-lrfu`、`--kvmem-lrfu-lambda`、`--kvmem-lrfu-top-frac`、
+`--kvmem-lrfu-fresh-frac`、`--kvmem-score-agg`，默认全部关闭）来自 llama.cpp KVMem 后端移植。
+本机 A/B：生产 32K 窗口开/关持平（12/12 对 12/12，速度一致）；故意压小的窗口若开启需配套
+`--kvmem-lrfu-fresh-frac 0.5`（不加会让组合臂从 9/12 掉到 3/12）。详见 docs/serving.md 的
+ActKV 章节与 KVMMEM-PORT-NOTES.md 第 35/35.1 节。
+
 ## 分发
 
 本次只发布源码。现有本地 FFmpeg GPL full shared DLL 的完整对应源码及依赖构建资料
