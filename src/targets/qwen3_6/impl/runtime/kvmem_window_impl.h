@@ -432,10 +432,17 @@ void ProgramImplCore::prepare_window(SequenceState& sequence, std::uint32_t begi
                  static_cast<std::uint32_t>(TextConfig::full_attention_layers()),
                  static_cast<std::uint32_t>(TextConfig::head_dim),
                  static_cast<std::uint32_t>(TextConfig::query_heads),
-                 static_cast<std::uint32_t>(TextConfig::kv_heads)});
+                 static_cast<std::uint32_t>(TextConfig::kv_heads)},
+                kvmem_options.score_agg == 1 ? kvmem::MeanKeyGroupReduce::Max
+                                             : kvmem::MeanKeyGroupReduce::Mean);
             state.selector->set_retrieval_scores(scores);
             const auto ids = state.selector->pick_topk_blocks(required);
             selected.assign(ids.begin(), ids.end());
+            // ActKV two-phase commit: with action_lrfu on the store published a
+            // provisional keep-score ranking above; the round is folded into the
+            // retained score only now, with the blocks this round actually kept
+            // as the hit set. A no-op unless action_lrfu and deferred_lrfu are on.
+            state.selector->commit_lrfu(ids);
             if (kvmem_options.verify_transfers) {
                 std::fprintf(stderr, "KVMEM_RETRIEVAL_SCORES logical=%u scores=", begin);
                 for (std::size_t i = 0; i < scores.size(); ++i)
@@ -462,6 +469,14 @@ void ProgramImplCore::prepare_window(SequenceState& sequence, std::uint32_t begi
                 }
             }
             std::sort(selected.begin(), selected.end());
+            // No scoring happened this round, so nothing may be pending; commit
+            // with the recency selection anyway so a held round cannot leak into
+            // the next one. Cheap and a no-op in the normal case. `selected` is
+            // the 64-bit plan id type, so narrow it for the selector's API.
+            std::vector<std::uint32_t> kept;
+            kept.reserve(selected.size());
+            for (const auto id : selected) kept.push_back(static_cast<std::uint32_t>(id));
+            state.selector->commit_lrfu(kept);
         }
         if (kvmem_options.verify_transfers) {
             const auto protected_pages = std::min(kv_pages_for_tokens(state.protected_prefix_tokens), count);
@@ -1157,6 +1172,16 @@ void ProgramImplCore::prepare_memory_statistics(SequenceState& sequence,
         selection.select_budget = kvmem_options.selected_tokens;
         selection.sink_blocks = kvmem_options.sink_blocks();
         selection.recent_blocks = kvmem_options.recent_blocks();
+        // ActKV: opt-in action-oriented LRFU retention, identical option surface
+        // to the llama.cpp backend's --kvmem-action-lrfu.
+        selection.action_lrfu = kvmem_options.action_lrfu;
+        selection.lrfu_lambda = kvmem_options.lrfu_lambda;
+        selection.lrfu_top_frac = kvmem_options.lrfu_top_frac;
+        // This backend scores first and selects afterwards (set_retrieval_scores,
+        // then pick_topk_blocks), so the keep score must be committed once the
+        // selection exists -- otherwise a block grows on a score it never won a
+        // slot for. commit_lrfu() applies the held round.
+        selection.deferred_lrfu = true;
         state.selector = std::make_unique<kvmem::KvMemStore>(selection);
         state.query_sum.assign(memory_statistics->query_elements(), 0.0F);
         state.query_begin = query_begin;

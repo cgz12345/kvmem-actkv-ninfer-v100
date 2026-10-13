@@ -173,6 +173,15 @@ struct KvmemOptions {
     [[nodiscard]] std::uint32_t recent_blocks() const noexcept { return recent_tokens / 64U; }
     std::uint32_t retained_sessions = 4; // bounded inactive Host histories, 1..16
     bool verify_transfers = false;    // correctness diagnostics, off in product runs
+    // ActKV action-oriented LRFU retention. Names and defaults match the llama.cpp
+    // backend so one command line means the same thing on both: lambda 0.50, top-p 90%.
+    // Off keeps the historical one-shot cosine ranking byte-identical.
+    bool action_lrfu = false;         // --kvmem-action-lrfu
+    float lrfu_lambda = 0.5F;         // --kvmem-lrfu-lambda
+    float lrfu_top_frac = 0.9F;       // --kvmem-lrfu-top-frac
+    // ActKV Alg. 3 step 8: how a GQA group's query heads are combined while
+    // scoring. 0 = folded mean (historical), 1 = max over the group.
+    int score_agg = 0;                // --kvmem-score-agg mean|max
     // Optional cold snapshots of named inactive text sessions. No online KV paging.
     std::filesystem::path disk_path;
     std::uint64_t disk_bytes = 0;

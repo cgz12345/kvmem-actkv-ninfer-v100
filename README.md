@@ -6,6 +6,8 @@ KVMem keeps history in host memory and selects pages for a bounded GPU working w
 
 **Native GGUF loading is now implemented locally for Qwen/Swift dense 27B.** It retains original K/IQ quantization blocks and runs the NInfer CUDA engine directly, without a converted model file. See [supported formats, embedded frontend metadata and launch command](docs/maintainer/native-gguf-loading.md). This route supports text, embedded MTP, indexed draft heads, and image/video input with a matching mmproj GGUF. No frontend companion files are required. Arbitrary GGUF architectures are not supported.
 
+**ActKV retrieval flags are available as an opt-in port** from the llama.cpp KVMem backend: `--kvmem-action-lrfu`, `--kvmem-lrfu-lambda`, `--kvmem-lrfu-top-frac` and `--kvmem-score-agg mean|max` add the action-oriented LRFU keep score and GQA-max aggregation. The default stays the historical one-shot cosine ranking; in local A/B testing the flags were neutral at the production 32K window (12/12 vs 12/12 recall, equal decode speed) and the ActKV-enabled arms lost recall under a deliberately undersized 8192-token window (6/12 and 3/12 vs 9/12 baseline), so they remain off by default. See [ActKV action-oriented retrieval](docs/serving.md#actkv-action-oriented-retrieval-opt-in).
+
 
 在 Tesla V100 16GB 上运行 Swift-1.5 Qwen3.8-27B：KVMem 长上下文、MTP 投机、图片输入和 OpenAI 兼容 API。
 

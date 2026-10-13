@@ -6,6 +6,8 @@
 
 **本地已实现 Qwen/Swift dense 27B 原生 GGUF 加载**：保留 K/IQ 量化块，直接使用 NInfer CUDA 引擎，无需先转换整个模型文件。[支持范围与启动方法](docs/maintainer/native-gguf-loading.md)。原生路径支持文本、内嵌 MTP、优化草稿头；搭配同模型 mmproj GGUF 可启用图片/视频。分词器和模板直接从模型读取，不需要伴随资源文件。不能加载任意架构的 GGUF。
 
+**ActKV 检索参数已移植为可选启用**（来自 llama.cpp KVMem 后端）：`--kvmem-action-lrfu`、`--kvmem-lrfu-lambda`、`--kvmem-lrfu-top-frac`、`--kvmem-score-agg mean|max` 提供动作导向 LRFU 保留分与 GQA-max 聚合。默认仍是历史的一次性余弦排序；本机 A/B 中生产 32K 窗口两者持平（12/12 对 12/12，解码速度一致），故意压小的 8192 窗口下 ActKV 各臂召回下降（6/12 与 3/12，基线 9/12），因此保持默认关闭。详见 [ActKV action-oriented retrieval](docs/serving.md#actkv-action-oriented-retrieval-opt-in)。
+
 
 在 Tesla V100 16GB 上运行 Swift-1.5 Qwen3.8-27B：KVMem 长上下文、MTP 投机、图片输入和 OpenAI 兼容 API。
 

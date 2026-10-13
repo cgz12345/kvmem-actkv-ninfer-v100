@@ -112,6 +112,12 @@ std::string serve_usage_text(const char* argv0) {
            "       --preserve-thinking retains closed-turn assistant reasoning in later prompts\n"
            "       --lenient-image-detail reads an OpenAI image detail other than auto, low or high\n"
            "       as auto instead of refusing the request\n"
+           "       --kvmem-action-lrfu enables ActKV action-oriented LRFU retention "
+           "(default off)\n"
+           "       --kvmem-lrfu-lambda F sets the LRFU decay, 0 < F < 1 (default 0.50)\n"
+           "       --kvmem-lrfu-top-frac F keeps the top hit fraction per round, "
+           "0 < F <= 1 (default 0.90)\n"
+           "       --kvmem-score-agg mean|max selects GQA query aggregation (default mean)\n"
            "       sampler defaults come from the loaded model and resolved thinking mode; "
            "server flags and request fields override individual values.\n"
            "       --greedy forces temperature 0 (exact argmax).\n";
@@ -290,6 +296,28 @@ ServeOptions parse_serve_options(int argc, char** argv) {
                 parse_nonnegative_int(require_value("--kvmem-retained"), "kvmem-retained"));
         } else if (arg == "--kvmem-verify") {
             options.kvmem.verify_transfers = true;
+        } else if (arg == "--kvmem-action-lrfu") {
+            options.kvmem.action_lrfu = true;
+        } else if (arg == "--kvmem-lrfu-lambda") {
+            options.kvmem.lrfu_lambda = parse_float_in(
+                require_value("--kvmem-lrfu-lambda"), "kvmem-lrfu-lambda", 0.0F, 1.0F);
+            if (!(options.kvmem.lrfu_lambda > 0.0F && options.kvmem.lrfu_lambda < 1.0F)) {
+                throw std::invalid_argument("--kvmem-lrfu-lambda must be in (0, 1)");
+            }
+        } else if (arg == "--kvmem-lrfu-top-frac") {
+            options.kvmem.lrfu_top_frac = parse_float_in(
+                require_value("--kvmem-lrfu-top-frac"), "kvmem-lrfu-top-frac", 0.0F, 1.0F);
+            if (!(options.kvmem.lrfu_top_frac > 0.0F)) {
+                throw std::invalid_argument("--kvmem-lrfu-top-frac must be in (0, 1]");
+            }
+        } else if (arg == "--kvmem-score-agg") {
+            // require_value() returns a const char*: bind it to a view before
+            // comparing, or != compares pointers and every value is rejected.
+            const std::string_view mode = require_value("--kvmem-score-agg");
+            if (mode != "mean" && mode != "max") {
+                throw std::invalid_argument("--kvmem-score-agg must be mean or max");
+            }
+            options.kvmem.score_agg = mode == "max" ? 1 : 0;
         } else if (arg == "--kv-headroom-mib") {
             const std::uint64_t mib =
                 parse_u64(require_value("--kv-headroom-mib"), "kv-headroom-mib");
