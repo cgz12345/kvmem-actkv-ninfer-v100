@@ -48,3 +48,8 @@ and [iamwavecut/ninfer-all](https://github.com/iamwavecut/ninfer-all) (Apache-2.
 
 `.ninfer` model artifacts are not distributed with this source tree and are not covered by its
 license. They are separate downloads from their own publishers.
+
+
+## 5. ActKV reference benchmark
+
+`tools/bench/actkv/niah33.py` is adapted from [melis2023/ninfer-kvmem-actkv](https://github.com/melis2023/ninfer-kvmem-actkv), revision `1c75f798eb59ca5629f0b8db259c2b3c0df6a84d`, Apache-2.0. The workload and recall scoring are retained; endpoint/output paths and final acceptance are adapted. The community port is separate from the ActKV paper implementation.

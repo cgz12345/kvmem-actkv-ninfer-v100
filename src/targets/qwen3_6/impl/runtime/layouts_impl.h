@@ -316,7 +316,9 @@ WorkspacePlan build_workspace_plan(SequencePlanImpl plan) {
 
     const auto text_common_root = [&](WorkspaceLayoutBuilder& layout, std::int32_t tokens) {
         (void)workspace_recipe::text_prefill_roots<TextConfig>(
-            layout, tokens, plan.features.vision ? 3 : 0, plan.features.vision ? tokens : 0);
+            // Text-only KVMem compaction also needs a distinct scalar RoPE position
+            // per token when cache_position_shift is nonzero. Reserve its worst case.
+            layout, tokens, plan.features.vision ? 3 : 1, plan.features.vision ? tokens : 0);
     };
     const auto attention_stage = [&](WorkspaceLayoutBuilder& layout, std::int32_t first,
                                      std::int32_t last, qwen3_6::TextPhase phase,

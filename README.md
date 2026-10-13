@@ -24,6 +24,10 @@ engine, maintained from real 16 GB measurements, not paper specs.
   the llama.cpp KVMem backend. Default stays the historical one-shot cosine ranking; measured
   neutral at the production 32K window and guarded under small windows by the fresh-slot
   reservation ([details](docs/serving.md#actkv-action-oriented-retrieval-opt-in)).
+  The [reference reproduction](docs/maintainer/actkv-reproduction.md) provides a mean-profile
+  launcher and the original 33-needle/80-call workload. The Qwen mean profile passed33/33
+  immediate and final recall,80 tool calls and14/14 cross-tool recall; baseline also passed.
+  Mean and max are evaluated separately; no advantage over baseline is established.
 - **Native GGUF loading** — Qwen/Swift dense 27B `.gguf` runs directly on the CUDA engine,
   keeping the original K/IQ quantization blocks: text, embedded MTP, indexed draft heads and
   matching `--mmproj` vision, without converting the model

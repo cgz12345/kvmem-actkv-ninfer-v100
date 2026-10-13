@@ -21,6 +21,9 @@ OpenAI/Anthropic 兼容 HTTP 服务、图片/视频输入，以及原生 GGUF �
   自 llama.cpp KVMem 后端移植。默认保持历史的一次性余弦排序；生产 32K 窗口实测持平，
   小窗口由 fresh 保底槽位兜底
   （[说明](docs/serving.md#actkv-action-oriented-retrieval-opt-in)）。
+  [参考复现](docs/maintainer/actkv-reproduction.md)提供 mean 启动配置与原版 33 针/80 次工具测试，
+  Qwen mean 配置已通过同轮/最终33/33、80次工具调用、跨工具14/14；关闭的基线也满分。
+  mean 和 max 分开评估，目前没有优于基线的证据。
 - **原生 GGUF 加载** —— Qwen/Swift dense 27B `.gguf` 直接跑 CUDA 引擎，保留原始 K/IQ
   量化块：文本、内嵌 MTP、优化草稿头、搭配 `--mmproj` 的视觉，无需转换整个模型
   （[范围与启动](docs/maintainer/native-gguf-loading.md)）。
