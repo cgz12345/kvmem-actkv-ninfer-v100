@@ -125,3 +125,7 @@ second V100 in the same host; out of scope until then.
 `v1.3.0` is published: master, the tag, a GitHub release with the long-context numbers, and the
 ghcr.io image. `v1.2.0` stays a local tag because its content is included in v1.3.0; `wip-a8e212ac`
 and the `ninfer:v1.3.0b` image are local-only reference material and must not be pushed.
+
+## 2026-10-14 upstream optimization qualification
+
+Chained INT8 attention PV accumulation and NVFP4/FP8 decode activation staging / fused residual have been ported and qualified on Windows V100. Full numerical results, operator A/B and remaining exclusions are recorded in [the upstream audit](maintainer/upstream-audit-20261013.md). `NINFER_SM70_ATTN_V3=0` restores the previous PV epilogue for controlled comparisons. Operator timing is not whole-model throughput.

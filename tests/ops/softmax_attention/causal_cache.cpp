@@ -2303,6 +2303,16 @@ int run_geometry(const Geometry& geometry) {
                             MappingPattern::Fragmented);
     failures += run_a3_case(geometry, KvCacheStorage::Int8Group64, {8, 17, 512, 406u},
                             MappingPattern::Fragmented);
+    // The Volta chained PV path rounds across 64-key tiles. Qualify production-length
+    // and larger windows against the independent FP64 oracle without changing criteria.
+    for (const AttentionCase test_case : {
+             AttentionCase{1, 32767, 32768, 407u},
+             AttentionCase{4, 32764, 32768, 408u},
+             AttentionCase{4, 131068, 131072, 409u},
+         }) {
+        failures += run_a3_case(geometry, KvCacheStorage::Int8Group64, test_case,
+                                MappingPattern::Fragmented);
+    }
 #endif
     return failures;
 }
