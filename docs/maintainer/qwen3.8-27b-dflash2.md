@@ -5,7 +5,7 @@
 > 范围：本文只固定 Qwen3.8-27B DFlash2 的模型计算、proposal、target
 > verification 和状态语义。Artifact inventory 与存储格式由
 > [`qwen3.8-27b-artifact.md`](qwen3.8-27b-artifact.md) 管理；Op 拆分、shape 和融合边界由
-> [`2026-09-05-qwen3.8-27b-dflash2-op-checklist.md`](2026-09-05-qwen3.8-27b-dflash2-op-checklist.md)
+> 上游的 2026-09-05 DFlash2 op checklist（未随本仓库分发）
 > 管理。
 
 ## 1. 核对依据与结论

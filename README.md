@@ -81,6 +81,20 @@ r = client.chat.completions.create(
 print(r.choices[0].message.content)
 ```
 
+## Serving profiles
+
+Three launchers cover the tested configurations; each keeps the model, KV geometry and
+speculation flags explicit:
+
+| Launcher | Artifact | KV window (selected + reserve) | Notes |
+|---|---|---|---|
+| `scripts/windows/start-swift15-256k.bat` | Swift-1.5 GSQ-RCO IQ3_S | 30720 + 2048 | Local production profile: sink 5120, recent 64, vision, MTP K=3, int8 KV, **ActKV mean + fresh-frac 0.5** |
+| `scripts/windows/start-actkv-256k.bat MODEL on\|off\|max` | Qwen3.8-27B GSQ-RCO IQ3_S | 36864 + 16384 | ActKV reference profile: sink 0, recent 1024, MTP K=4, int8 KV; `on` = LRFU mean (validated 33/33), `off` = baseline, `max` = experimental arm |
+| `scripts/windows/start-native-gguf.bat MODEL.gguf [mtp] [MMPROJ.gguf]` | Qwen/Swift dense 27B `.gguf` | per configuration | Native GGUF route: original K/IQ blocks, embedded MTP and draft head, optional mmproj vision |
+
+All profiles serve the same HTTP surface (port 8088 for the Swift profile, 18200 for the reference
+instance) with model id `qwen3.8-27b` (`ninfer-27b` for the reference launcher).
+
 ## Measured results
 
 The numbers below come from this card (Tesla V100 16 GB, Windows, CUDA 12.8) and the binaries in
@@ -113,15 +127,30 @@ baseline is established.
 - Launched by `scripts/windows/start-swift15-256k.bat`: KVMem 30720+2048, sink 5120, recent 64,
   vision, MTP K=3, int8 KV, plus the ActKV mean profile with `--kvmem-lrfu-fresh-frac 0.5`.
 
-### Pelican SVG test (local ActKV-enabled service)
+### Animated pelican test
 
-![Pelican riding a bicycle](docs/assets/pelican-bicycle.png)
+Both local profiles generated an animated "pelican riding a bicycle" SVG (SMIL animation: wheels
+spinning, legs pedaling, gentle bobbing). Prompt: *"Draw a beautiful, lively animated SVG of a
+pelican riding a bicycle … Return only the SVG code, no explanation."*
 
-Prompt "Generate an SVG of a pelican riding a bicycle" with `reasoning_effort: none` and
-`max_tokens 16384`: **1,756 output tokens in 18.8 s (96.0 tok/s decode), finish=stop**. Raw SVG:
-[docs/assets/pelican-bicycle.svg](docs/assets/pelican-bicycle.svg). With the default thinking mode
-the same request spent an entire 8,192-token budget on reasoning and produced no SVG — budget for
-thinking whenever the output must be machine-readable.
+| Run | Artifact | Thinking | Output tokens | Wall time | Decode |
+|---|---|---|---:|---:|---:|
+| [Swift-1.5 animated pelican](docs/assets/pelican-swift-bicycle.svg) | Swift-1.5 IQ3_S (production profile) | `reasoning_effort: high` (16,421 reasoning) | 21,843 | 293.8 s | 74.7 tok/s |
+| [Qwen3.8-27B animated pelican](docs/assets/pelican-qwen-bicycle.svg) | Qwen3.8-27B GSQ-RCO IQ3_S (ActKV reference profile) | `reasoning_effort: medium` (1,181 reasoning) | 4,515 | 57.6 s | 79.6 tok/s |
+
+![Animated pelican on a bicycle, Swift-1.5](docs/assets/pelican-swift-bicycle.gif)
+
+*Swift-1.5, thinking-enabled run.*
+
+![Animated pelican on a bicycle, Qwen3.8-27B](docs/assets/pelican-qwen-bicycle.gif)
+
+*Qwen3.8-27B GSQ-RCO, ActKV reference profile.*
+
+Context for the numbers: with `reasoning_effort: none` the first, non-animated version completed
+in 18.8 s / 1,756 tokens at 96.0 tok/s; with the default thinking mode the same request spent an
+entire 8,192-token budget on reasoning and produced no SVG. Budget for thinking whenever the
+output must be machine-readable. The GIF captures render 14 frames of the 1.4 s animation loop
+(10 fps); the SVG files animate natively on the GitHub file view.
 
 ### Verified scope and caveats
 
@@ -133,6 +162,67 @@ thinking whenever the output must be machine-readable.
 - DFlash2 is not usable on this card with the current artifacts (VRAM + head format); MTP is the
   supported speculative backend. Raw evidence lives in
   [KVMMEM-PORT-NOTES.md](../KVMMEM-PORT-NOTES.md) and `runtime-logs/`.
+
+## Reproducing the measurements
+
+```powershell
+# ActKV reference: 33 needles, 80 tool calls, deterministic scoring (Qwen GSQ-RCO artifact)
+.\scripts\windows\start-actkv-256k.bat "D:\models\Qwen3.8-27B-GSQ-RCO-IQ3_S.ninfer" on
+python tools/bench/actkv/niah33.py --endpoint http://127.0.0.1:18200/v1/chat/completions `
+    --output out/actkv/mean.json
+
+# Deterministic ActKV A/B against any live server (seeded workload, identical prompts per arm)
+python tests/actkv_ab.py plan                  # print the workload, no server needed
+python tests/actkv_ab.py run on actkv-on 8089  # run against a server started with chosen flags
+```
+
+Both harnesses are self-contained Python; the A/B workload regenerates deterministically from a
+fixed seed, so two arms can be compared with byte-identical prompts.
+
+## API surface
+
+- OpenAI-compatible `/v1/chat/completions`, `/v1/responses`, `/v1/models` and Anthropic
+  `/v1/messages`; SSE streaming with `usage`; tool calls with streamed argument fragments.
+- Sampling defaults come from the loaded model; per-request overrides cover temperature,
+  top-p/top-k, min-p, presence/frequency penalties, seed, `max_tokens` (service default 65,536)
+  and `reasoning_effort: none|minimal|low|medium|high|xhigh`.
+- Image/video input on the Vision and native-GGUF routes; `--mmproj` loads a matching GGUF
+  projector.
+- Operations: `GET /health`, `GET /props`, `GET /stats`, `GET /metrics`, `GET /slots`.
+- Reliability: system instructions and the complete tool preamble are pinned in every KVMem
+  pressure selection; malformed or truncated tool markup is repaired where unambiguous and
+  rejected otherwise, with the original request optionally captured locally
+  (`--failed-tool-request-dir`).
+
+## Repository layout
+
+```text
+targets/        model execution (Qwen3.6/3.8 27B, 35B-A3B), layouts, request planning
+ops/            CUDA operators (attention, linear, MoE, GDN/ReplaySSM, quantization)
+runtime/        engine core, scheduling, resource and context management
+serve/          HTTP server, protocol adapters, tool handling
+artifact/       container readers, including the native GGUF path
+kvmem/          host KV store, retrieval scoring, residency and IO contracts
+docs/           user guides + maintainer references (index in docs/README.md)
+scripts/windows launchers for the tested serving profiles
+tools/bench     benchmarks, including the ActKV reference harness
+tests/          C++ suites and the deterministic ActKV A/B harness
+```
+
+## Limitations and roadmap
+
+- 262,144 is a **logical** ceiling with a bounded GPU window (32K production, 53K reference
+  profile). KVMem selects history pages; it is not full attention over the archive, and passing
+  long-context samples are not a 256K quality certification.
+- ActKV is an opt-in KVMem adaptation: the mean profile matches but does not beat the baseline,
+  and the max aggregation regresses (table above). The engine default stays off; only the tested
+  launcher profiles enable it.
+- DFlash2 is not usable on this card with the current artifacts (VRAM budget and selector-head
+  format); MTP is the supported speculative backend.
+- A full 65,536-token single generation has not been verified end to end; the default output
+  budget is 65,536 and generation stops when the model stops.
+- FFmpeg GPL shared-build binaries are not distributed until their complete corresponding source
+  is assembled.
 
 ## When something goes wrong
 

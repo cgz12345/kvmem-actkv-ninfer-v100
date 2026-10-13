@@ -49,6 +49,10 @@ Runtime and Op references:
 - [Op admission, contracts, ownership, qualification, and performance rules](maintainer/op-development.md)
 - [ReplaySSM GDN technical reference](maintainer/replayssm-gdn.md)
 - [Linear benchmark contract and registered suites](maintainer/linear-benchmark.md)
+- [Model weight execution paths and quantization binding](maintainer/model-weight-execution.md)
+- [Qwen3.8-27B DFlash2 algorithm core](maintainer/qwen3.8-27b-dflash2.md)
+- [Model and tool-call reliability comparison](maintainer/model-tool-comparison.md)
+- [Native GGUF loading scope and launcher](maintainer/native-gguf-loading.md)
 
 `engine-architecture.md` is the sole top-level Engine architecture reference.
 `resource-scheduling-and-context-cache.md` is its narrower authority for resource selection,

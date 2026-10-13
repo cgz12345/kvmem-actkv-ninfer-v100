@@ -73,6 +73,17 @@ r = client.chat.completions.create(
 print(r.choices[0].message.content)
 ```
 
+## 服务配置（三个已验证启动器）
+
+| 启动器 | 制品 | KV 窗口（selected + reserve） | 说明 |
+|---|---|---|---|
+| `scripts/windows/start-swift15-256k.bat` | Swift-1.5 GSQ-RCO IQ3_S | 30720 + 2048 | 本地生产配置：sink 5120、recent 64、视觉、MTP K=3、int8 KV，**ActKV mean + fresh-frac 0.5** |
+| `scripts/windows/start-actkv-256k.bat MODEL on\|off\|max` | Qwen3.8-27B GSQ-RCO IQ3_S | 36864 + 16384 | ActKV 参考配置：sink 0、recent 1024、MTP K=4、int8 KV；`on` = LRFU mean（已验证 33/33）、`off` = 基线、`max` = 实验臂 |
+| `scripts/windows/start-native-gguf.bat MODEL.gguf [mtp] [MMPROJ.gguf]` | Qwen/Swift dense 27B `.gguf` | 按配置 | 原生 GGUF 路线：原始 K/IQ 块、内嵌 MTP 与草稿头、可选 mmproj 视觉 |
+
+三个配置都提供同一套 HTTP 接口（Swift 生产用 8088，参考实例用 18200），模型名分别为
+`qwen3.8-27b` 与 `ninfer-27b`。
+
 ## 实测结果
 
 以下数字来自本机（Tesla V100 16GB、Windows、CUDA 12.8）与本仓库二进制；原始日志保存在本地
@@ -102,14 +113,29 @@ Swift 见下）。**没有证据表明 ActKV 比基线更快或更准。**
 - 由 `scripts/windows/start-swift15-256k.bat` 启动：KVMem 30720+2048、sink 5120、recent 64、
   视觉、MTP K=3、int8 KV，并启用 ActKV mean 配置 `--kvmem-lrfu-fresh-frac 0.5`。
 
-### 鹈鹕 SVG 测试（本地已启用 ActKV 的服务）
+### 动画鹈鹕测试
 
-![鹈鹕骑自行车](docs/assets/pelican-bicycle.png)
+两个本地配置各生成了一个"会动的鹈鹕骑自行车"SVG（SMIL 动画：车轮持续旋转、双腿蹬踏、
+车身轻微起伏）。提示词：*"Draw a beautiful, lively animated SVG of a pelican riding a
+bicycle … Return only the SVG code, no explanation."*
 
-提示词 "Generate an SVG of a pelican riding a bicycle"，`reasoning_effort: none`、
-`max_tokens 16384`：**1756 输出 tokens、18.8 秒、96.0 tok/s decode、finish=stop**。原始 SVG：
-[docs/assets/pelican-bicycle.svg](docs/assets/pelican-bicycle.svg)。默认思考模式下同一请求把
-8192 token 预算全部花在推理上、没有产出 SVG——输出需要机器可读时记得给思考留预算。
+| 运行 | 制品 | 思考 | 输出 tokens | 耗时 | Decode |
+|---|---|---|---:|---:|---:|
+| [Swift-1.5 动画鹈鹕](docs/assets/pelican-swift-bicycle.svg) | Swift-1.5 IQ3_S（生产配置） | `reasoning_effort: high`（其中 16,421 推理） | 21,843 | 293.8 秒 | 74.7 tok/s |
+| [Qwen3.8-27B 动画鹈鹕](docs/assets/pelican-qwen-bicycle.svg) | Qwen3.8-27B GSQ-RCO IQ3_S（ActKV 参考配置） | `reasoning_effort: medium`（其中 1,181 推理） | 4,515 | 57.6 秒 | 79.6 tok/s |
+
+![会动的鹈鹕，Swift-1.5](docs/assets/pelican-swift-bicycle.gif)
+
+*Swift-1.5，开启思考的生成结果。*
+
+![会动的鹈鹕，Qwen3.8-27B](docs/assets/pelican-qwen-bicycle.gif)
+
+*Qwen3.8-27B GSQ-RCO，ActKV 参考配置。*
+
+数字的背景：同提示词 `reasoning_effort: none` 时第一版（静态）18.8 秒 / 1756 tokens / 96.0 tok/s
+完成；默认思考模式下同一请求会把 8192 token 预算全部花在推理上、没有产出 SVG——输出需要机器
+可读时记得给思考留预算。GIF 以 10fps 捕捉 1.4 秒动画循环的 14 帧；SVG 文件在 GitHub 文件页可
+原生播放动画。
 
 ### 验证范围与边界
 
@@ -119,6 +145,57 @@ Swift 见下）。**没有证据表明 ActKV 比基线更快或更准。**
   单次生成尚未验证。
 - DFlash2 在本卡与现有制品上不可用（显存 + 头格式），MTP 是受支持的投机后端。完整边界与
   原始证据见 [KVMMEM-PORT-NOTES.md](../KVMMEM-PORT-NOTES.md) 与 `runtime-logs/`。
+
+## 复现方法
+
+```powershell
+# ActKV 参考测试：33 针、80 次工具调用、确定性评分（需要 Qwen GSQ-RCO 制品）
+.\scripts\windows\start-actkv-256k.bat "D:\models\Qwen3.8-27B-GSQ-RCO-IQ3_S.ninfer" on
+python tools/bench/actkv/niah33.py --endpoint http://127.0.0.1:18200/v1/chat/completions `
+    --output out/actkv/mean.json
+
+# 确定性 ActKV A/B：对任意运行中的服务生效（固定种子，两臂提示词逐字节相同）
+python tests/actkv_ab.py plan                  # 打印工作负载，无需服务
+python tests/actkv_ab.py run on actkv-on 8089  # 对按指定旗标启动的服务运行
+```
+
+两个测试脚本都是自包含 Python；A/B 工作负载由固定种子确定性生成，两臂可直接对比。
+
+## API 能力
+
+- OpenAI 兼容 `/v1/chat/completions`、`/v1/responses`、`/v1/models`，以及 Anthropic
+  `/v1/messages`；SSE 流式输出带 `usage`；工具调用参数流式解析。
+- 采样默认值来自模型本身；可按请求覆盖 temperature、top-p/top-k、min-p、惩罚项、seed、
+  `max_tokens`（服务默认 65,536）与 `reasoning_effort: none|minimal|low|medium|high|xhigh`。
+- Vision 与原生 GGUF 路线支持图片/视频输入；`--mmproj` 加载匹配的 GGUF 投影器。
+- 运维接口：`GET /health`、`GET /props`、`GET /stats`、`GET /metrics`、`GET /slots`。
+- 可靠性：system 指令与完整工具前缀在每次 KVMem 压力选择中固定；残缺/截断的工具标记在无歧义
+  时修复、否则拒绝，并可本地抓取原始请求（`--failed-tool-request-dir`）。
+
+## 仓库结构
+
+```text
+targets/       模型执行（Qwen3.6/3.8 27B、35B-A3B）、布局与请求规划
+ops/           CUDA 算子（注意力、线性、MoE、GDN/ReplaySSM、量化）
+runtime/       引擎核心、调度、资源与上下文管理
+serve/         HTTP 服务、协议适配、工具处理
+artifact/      容器读取，含原生 GGUF 路径
+kvmem/         主机 KV 存储、检索评分、驻留与 IO 契约
+docs/          用户指南 + 维护参考（索引见 docs/README.md）
+scripts/windows 三个已验证服务配置的启动器
+tools/bench    基准工具，含 ActKV 参考夹具
+tests/         C++ 测试套件与确定性 ActKV A/B 夹具
+```
+
+## 限制与路线
+
+- 262,144 是**逻辑**上限，GPU 只保留有界窗口（生产 32K、参考配置 53K）。KVMem 选择历史
+  页面，不是对全部历史做完整注意力；通过的长上下文样本不构成 256K 质量认证。
+- ActKV 是可选的 KVMem 适配：mean 配置与基线持平而非超越，max 聚合会退化（见上表）。引擎
+  默认关闭，只有经过测试的启动器配置才启用。
+- DFlash2 在本卡与现有制品上不可用（显存预算 + 选择头格式）；MTP 是受支持的投机后端。
+- 完整 65,536-token 单次生成尚未端到端验证；默认输出预算为 65,536，模型自行停止即结束。
+- FFmpeg GPL 共享构建二进制在补齐完整对应源码之前不对外分发。
 
 ## 出问题时提供什么
 
