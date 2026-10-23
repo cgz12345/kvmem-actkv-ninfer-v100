@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstdio>
 #include <exception>
 #include <iterator>
 #include <limits>
@@ -12073,8 +12074,21 @@ ProgramImplCore::decode_ordinary_batch(std::span<const std::uint32_t> lanes,
             maximum_frontier = 0;
             for (const auto lane : lanes) {
                 auto& sequence = active_sequence(lane);
-                prepare_window(sequence, sequence.execution_frontier,
-                               sequence.execution_frontier + 1U);
+                // The compact view must never reach the physical attention window.
+                // A restored or retained-native path that lost the KVMem shift would
+                // otherwise pass a logical position to the kernel.
+                if (compact_position(sequence, sequence.execution_frontier) >=
+                    kvmem_window_tokens) {
+                    std::fprintf(stderr,
+                                 "KVMEM_FORCE_COMPACT ordinary frontier=%u removed=%u pages=%zu\n",
+                                 sequence.execution_frontier, sequence.window.removed_tokens,
+                                 sequence.window.pages.size());
+                    prepare_window(sequence, sequence.execution_frontier,
+                                   std::min(capacity, sequence.execution_frontier + 1U), true);
+                } else {
+                    prepare_window(sequence, sequence.execution_frontier,
+                                   sequence.execution_frontier + 1U);
+                }
                 maximum_frontier = std::max(maximum_frontier,
                     compact_position(sequence, sequence.execution_frontier));
             }
@@ -12243,8 +12257,16 @@ ProgramImplCore::decode_mtp_batch(std::span<const std::uint32_t> lanes,
                 auto& sequence = active_sequence(lane);
                 const auto frontier = sequence.execution_frontier;
                 const auto extent = use_lookup ? qwen3_6::kMtpLookupMaximumDrafts : draft_window;
-                prepare_window(sequence, frontier,
-                    std::min(capacity, frontier + extent + draft_window + 1U));
+                if (compact_position(sequence, frontier) >= kvmem_window_tokens) {
+                    std::fprintf(stderr,
+                                 "KVMEM_FORCE_COMPACT mtp frontier=%u removed=%u pages=%zu\n",
+                                 frontier, sequence.window.removed_tokens,
+                                 sequence.window.pages.size());
+                    prepare_window(sequence, frontier, std::min(capacity, frontier + 1U), true);
+                } else {
+                    prepare_window(sequence, frontier,
+                        std::min(capacity, frontier + extent + draft_window + 1U));
+                }
                 // A changed attention view invalidates the learned proposals
                 // and therefore any lookup continuation qualified against them.
                 if (sequence.mtp_draft_count == 0) { use_lookup = false; }
