@@ -1570,6 +1570,15 @@ PreparedPrompt Frontend::prepare_tokens(std::vector<TokenId> token_ids,
     auto prepared              = std::make_unique<PreparedPromptData>();
     PreparedPromptData& result = *prepared;
     result.token_ids           = std::move(token_ids);
+    // Token-only prompts have no chat boundary that marks the current intent,
+    // so the retrieval query used to be the mean of the whole prompt. For a
+    // 256K input that mean vector is diluted into noise and every block scores
+    // almost the same. Score against the prompt tail instead. Long chat prompts
+    // carry their own final-user region and do not take this path.
+    constexpr std::size_t token_query_tail = 1024;
+    const std::size_t query_begin = result.token_ids.size() > token_query_tail
+        ? result.token_ids.size() - token_query_tail : 0;
+    result.memory_query = TokenSpan{query_begin, result.token_ids.size() - query_begin};
     assign_text_positions(result);
     result.identity.reusable                  = allow_prefix_identity;
     result.context_cache.retention            = runtime::RetentionClass::RecentPrivate;

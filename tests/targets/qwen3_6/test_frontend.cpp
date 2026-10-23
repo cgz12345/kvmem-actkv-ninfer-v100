@@ -628,6 +628,28 @@ int test_context_capacity_guard() {
     return failures;
 }
 
+int test_prepare_tokens_tail_query() {
+    ninfer::targets::qwen3_6::FrontendOptions options;
+    options.vision_enabled = false;
+    options.max_context    = 2048;
+    const Frontend frontend = FrontendFactory::create_component(resources(), options);
+    const auto long_prompt =
+        frontend.prepare_tokens(std::vector<ninfer::TokenId>(1500, 0));
+    const auto& long_data = FrontendFactory::inspect(long_prompt);
+    int failures = check(long_data.memory_query.has_value() &&
+                             long_data.memory_query->begin == 476 &&
+                             long_data.memory_query->count == 1024,
+                         "prepare_tokens did not score a long token-only prompt on its 1024-token tail");
+    const auto short_prompt =
+        frontend.prepare_tokens(std::vector<ninfer::TokenId>(10, 0));
+    const auto& short_data = FrontendFactory::inspect(short_prompt);
+    failures += check(short_data.memory_query.has_value() &&
+                          short_data.memory_query->begin == 0 &&
+                          short_data.memory_query->count == 10,
+                      "prepare_tokens did not score a short token-only prompt in full");
+    return failures;
+}
+
 int test_official_chat_template() {
     int failures = 0;
     failures += check(render_chat_text({chat_message(ninfer::ChatRole::User, "hello")}) ==
@@ -2323,6 +2345,7 @@ int run_tests() {
     run("test_repeated_special_tokens_scan_linearly", [&] { return test_repeated_special_tokens_scan_linearly(); });
     run("test_bounded_tokenizer_prefix", [&] { return test_bounded_tokenizer_prefix(); });
     run("test_context_capacity_guard", [&] { return test_context_capacity_guard(); });
+    run("test_prepare_tokens_tail_query", [&] { return test_prepare_tokens_tail_query(); });
     run("test_official_chat_template", [&] { return test_official_chat_template(); });
     run("test_ordered_instruction_turns", [&] { return test_ordered_instruction_turns(); });
     run("test_assistant_continuation", [&] { return test_assistant_continuation(); });

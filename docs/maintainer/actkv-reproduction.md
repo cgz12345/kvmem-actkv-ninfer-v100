@@ -20,7 +20,7 @@ In another terminal:
 python tools/bench/actkv/niah33.py --endpoint http://127.0.0.1:18200/v1/chat/completions --output out/actkv/mean.json
 ```
 
-Restart the same launcher with `off` for the baseline and use a different result path. `max` enables LRFU+max as a separate experimental arm. All three modes retain the same model and window: selected36864/reserve16384, 53248 physical tokens, recent1024, prefill256, INT8 KV, MTP4, max-context262144, Host archive12GiB. The reference has no extra fixed sink setting; automatic instruction protection remains enabled.
+Restart the same launcher with `off` for the baseline and use a different result path. The historical `max` arm is retired: the server now refuses `--kvmem-score-agg max` because upstream measured 39/40 -> 28/40 same-turn recall with a per-GQA-group max. All supported modes retain the same model and window: selected36864/reserve16384, 53248 physical tokens, recent1024, prefill256, INT8 KV, MTP4, max-context262144, Host archive12GiB. The reference has no extra fixed sink setting; automatic instruction protection remains enabled.
 
 The workload and recall scoring match the original script: 15 writes with435 filler lines, 33 needles, final recall, and14 cross-tool checks. Only endpoint/output paths and final acceptance are adapted. Exit0 requires33/33 immediate,33/33 strict final,14/14 cross-tool and at least80 tool calls; a successful retry union alone is insufficient. Tool execution uses local controlled stubs, including send_alert; no messages are sent externally.
 
@@ -36,7 +36,7 @@ The complete reference workload passed on2026-10-13. Full mean used the exact pr
 
 The mean run completed normally with no retry needed. Peak observed prompt was **258,202 tokens** under the262144 logical ceiling, using the53248-token physical window. The post-fill write-prefill medians were193.3tok/s baseline and193.3tok/s mean. These are single-run stage samples; the reference harness reports the final HTTP hop for some multi-hop probe timings, so they must not be summed as whole-trace wall time.
 
-This qualifies the community mean profile on this fixture and resolves the incomplete13-round result. Both baseline and mean are perfect here: it does **not** establish an ActKV speed or accuracy advantage, and the max arm regresses. Keep the global option off unless selecting a tested profile. Smaller-window Swift results and fresh-frac0.5 mitigation remain separate experiments. Local raw logs and model weights are not part of source publication.
+This qualifies the community mean profile on this fixture and resolves the incomplete13-round result. Both baseline and mean are perfect here: it does **not** establish an ActKV speed or accuracy advantage, and the max arm regressed and is now refused by the server. Keep the global option off unless selecting a tested profile. Smaller-window Swift results and fresh-frac0.5 mitigation remain separate experiments. Local raw logs and model weights are not part of source publication.
 
 The platform is V10016GB versus the reference RTX5060Ti16GB. The engine revision and model-byte identity with the author's private artifact are not identical verified conditions. Current MTP context lookup supports15 copied drafts; the reference explicitly requests31 with adaptive MTP. CPU vision residency is also outside this text-only reproduction. Absolute GPU speeds and all hardware configurations are not qualified by this test.
 

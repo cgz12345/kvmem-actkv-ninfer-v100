@@ -1,19 +1,19 @@
 @echo off
 setlocal
 rem Reference ActKV text + MTP profile; Qwen GSQ-RCO IQ3_S on V100 16 GB.
-rem mean reproduces the reference README report; max is a separate experimental arm.
+rem mean reproduces the reference README report. The GQA max arm is retired:
+rem upstream measured 39/40 -> 28/40 same-turn recall with it.
 if "%~1"=="" (
-  echo Usage: %~nx0 "C:\models\Qwen.ninfer" [on^|off^|max]
+  echo Usage: %~nx0 "C:\models\Qwen.ninfer" [on^|off]
   exit /b 2
 )
 set "NINFER_ACTKV_SWITCH=--kvmem-action-lrfu"
 set "NINFER_ACTKV_AGG=mean"
-if not "%~2"=="" if /I not "%~2"=="on" if /I not "%~2"=="off" if /I not "%~2"=="max" (
-  echo Mode must be on, off, or max.
+if not "%~2"=="" if /I not "%~2"=="on" if /I not "%~2"=="off" (
+  echo Mode must be on or off.
   exit /b 2
 )
 if /I "%~2"=="off" set "NINFER_ACTKV_SWITCH="
-if /I "%~2"=="max" set "NINFER_ACTKV_AGG=max"
 set "NINFER_ACTKV_MODEL=%~f1"
 if not exist "%NINFER_ACTKV_MODEL%" (
   echo Model not found: "%NINFER_ACTKV_MODEL%"

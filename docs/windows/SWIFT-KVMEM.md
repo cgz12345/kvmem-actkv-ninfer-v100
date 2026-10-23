@@ -76,8 +76,8 @@ ActKV 检索参数（`--kvmem-action-lrfu`、`--kvmem-lrfu-lambda`、`--kvmem-lr
 （`--kvmem-score-agg mean --kvmem-lrfu-fresh-frac 0.5`），不需要时删掉脚本里那一行即可回到基线。
 本机 A/B：生产 32K 窗口开/关持平（12/12 对 12/12，速度一致）；故意压小的窗口若开启需配套
 `--kvmem-lrfu-fresh-frac 0.5`（不加会让组合臂从 9/12 掉到 3/12）。参考制品（Qwen GSQ-RCO）的
-33 针复现与 mean/max 对照见 docs/maintainer/actkv-reproduction.md；参数语义见 docs/serving.md
-的 ActKV 章节与 KVMMEM-PORT-NOTES.md 第 35/35.1 节。
+33 针复现与 mean 完整结果见 docs/maintainer/actkv-reproduction.md（其中保留已退役的 max 历史对照）；
+参数语义见 docs/serving.md 的 ActKV 章节与 KVMMEM-PORT-NOTES.md 第 35/35.1 节。
 
 ## 分发
 

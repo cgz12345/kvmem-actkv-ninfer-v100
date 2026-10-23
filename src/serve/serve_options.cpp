@@ -119,7 +119,8 @@ std::string serve_usage_text(const char* argv0) {
            "0 < F <= 1 (default 0.90)\n"
            "       --kvmem-lrfu-fresh-frac F reserves that share of the retrieved slots "
            "for the current round's ranking, 0 <= F <= 1 (default 0)\n"
-           "       --kvmem-score-agg mean|max selects GQA query aggregation (default mean)\n"
+           "       --kvmem-score-agg mean selects folded-mean GQA query aggregation; "
+           "max is retired because it degraded recall\n"
            "       sampler defaults come from the loaded model and resolved thinking mode; "
            "server flags and request fields override individual values.\n"
            "       --greedy forces temperature 0 (exact argmax).\n";
@@ -319,10 +320,15 @@ ServeOptions parse_serve_options(int argc, char** argv) {
             // require_value() returns a const char*: bind it to a view before
             // comparing, or != compares pointers and every value is rejected.
             const std::string_view mode = require_value("--kvmem-score-agg");
-            if (mode != "mean" && mode != "max") {
-                throw std::invalid_argument("--kvmem-score-agg must be mean or max");
+            if (mode == "max") {
+                throw std::invalid_argument(
+                    "--kvmem-score-agg max was retired: a per-GQA-group max reduced "
+                    "40-needle recall from 39/40 to 28/40; use mean");
             }
-            options.kvmem.score_agg = mode == "max" ? 1 : 0;
+            if (mode != "mean") {
+                throw std::invalid_argument("--kvmem-score-agg must be mean");
+            }
+            options.kvmem.score_agg = 0;
         } else if (arg == "--kv-headroom-mib") {
             const std::uint64_t mib =
                 parse_u64(require_value("--kv-headroom-mib"), "kv-headroom-mib");

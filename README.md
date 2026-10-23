@@ -22,7 +22,7 @@ engine, maintained from real 16 GB measurements, not paper specs.
   selection, independent of client cache-control hints
   ([serving.md](docs/serving.md#kvmem-instruction-and-tool-preservation)).
 - **ActKV retrieval, opt-in** — `--kvmem-action-lrfu`, `--kvmem-lrfu-lambda`,
-  `--kvmem-lrfu-top-frac`, `--kvmem-lrfu-fresh-frac`, `--kvmem-score-agg mean|max`, ported from
+  `--kvmem-lrfu-top-frac`, `--kvmem-lrfu-fresh-frac`, `--kvmem-score-agg mean`, ported from
   the llama.cpp KVMem backend. Default stays the historical one-shot cosine ranking; measured
   neutral at the production 32K window and guarded under small windows by the fresh-slot
   reservation ([details](docs/serving.md#actkv-action-oriented-retrieval-opt-in)).

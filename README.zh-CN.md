@@ -19,7 +19,7 @@ OpenAI/Anthropic 兼容 HTTP 服务、图片/视频输入，以及原生 GGUF �
   压力选择中固定，不依赖客户端 cache-control 提示
   （[serving.md](docs/serving.md#kvmem-instruction-and-tool-preservation)）。
 - **ActKV 检索（可选）** —— `--kvmem-action-lrfu`、`--kvmem-lrfu-lambda`、
-  `--kvmem-lrfu-top-frac`、`--kvmem-lrfu-fresh-frac`、`--kvmem-score-agg mean|max`，
+  `--kvmem-lrfu-top-frac`、`--kvmem-lrfu-fresh-frac`、`--kvmem-score-agg mean`，
   自 llama.cpp KVMem 后端移植。默认保持历史的一次性余弦排序；生产 32K 窗口实测持平，
   小窗口由 fresh 保底槽位兜底
   （[说明](docs/serving.md#actkv-action-oriented-retrieval-opt-in)）。
