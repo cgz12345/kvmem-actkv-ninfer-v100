@@ -2,7 +2,10 @@
 
 #include <utf8proc/utf8proc.h>
 
+#include <atomic>
+#include <cstdio>
 #include <cstdlib>
+#include <optional>
 #include <stdexcept>
 
 namespace ninfer::text::unicode_internal {
@@ -11,6 +14,25 @@ namespace {
 bool is_ascii_whitespace(std::int32_t codepoint) noexcept {
     return codepoint == ' ' || codepoint == '\t' || codepoint == '\n' || codepoint == '\r' ||
            codepoint == '\v' || codepoint == '\f';
+}
+
+std::string replace_invalid_utf8(std::string_view text) {
+    std::string sanitized;
+    sanitized.reserve(text.size());
+    for (std::size_t offset = 0; offset < text.size();) {
+        utf8proc_int32_t codepoint = 0;
+        const utf8proc_ssize_t length = utf8proc_iterate(
+            reinterpret_cast<const utf8proc_uint8_t*>(text.data() + offset),
+            static_cast<utf8proc_ssize_t>(text.size() - offset), &codepoint);
+        if (length < 0) {
+            sanitized.append("\xEF\xBF\xBD");
+            ++offset;
+        } else {
+            sanitized.append(text.data() + offset, static_cast<std::size_t>(length));
+            offset += static_cast<std::size_t>(length);
+        }
+    }
+    return sanitized;
 }
 
 } // namespace
@@ -28,18 +50,40 @@ std::string normalize_nfc(std::string_view text) {
     }
     if (ascii_only) { return std::string(text); }
 
-    utf8proc_uint8_t* mapped = nullptr;
-    const utf8proc_ssize_t result =
-        utf8proc_map(reinterpret_cast<const utf8proc_uint8_t*>(text.data()),
-                     static_cast<utf8proc_ssize_t>(text.size()), &mapped,
-                     static_cast<utf8proc_option_t>(UTF8PROC_STABLE | UTF8PROC_COMPOSE));
-    if (result < 0) {
-        throw std::invalid_argument(std::string("failed to normalize UTF-8 text as NFC: ") +
-                                    utf8proc_errmsg(result));
+    const auto normalize = [](std::string_view input) -> std::optional<std::string> {
+        utf8proc_uint8_t* mapped = nullptr;
+        const utf8proc_ssize_t result =
+            utf8proc_map(reinterpret_cast<const utf8proc_uint8_t*>(input.data()),
+                         static_cast<utf8proc_ssize_t>(input.size()), &mapped,
+                         static_cast<utf8proc_option_t>(UTF8PROC_STABLE | UTF8PROC_COMPOSE));
+        if (result < 0) {
+            std::free(mapped);
+            return std::nullopt;
+        }
+        std::string normalized(reinterpret_cast<const char*>(mapped),
+                               static_cast<std::size_t>(result));
+        std::free(mapped);
+        return normalized;
+    };
+
+    if (const auto normalized = normalize(text)) { return *normalized; }
+
+    // A client can replay a message whose text contains a partial or otherwise
+    // malformed UTF-8 sequence. Rejecting the whole conversation at NFC time
+    // makes the session unrecoverable, so replace the malformed bytes with the
+    // standard replacement character and keep the rest of the prompt intact.
+    const std::string sanitized = replace_invalid_utf8(text);
+    if (sanitized != text) {
+        if (const auto normalized = normalize(sanitized)) {
+            static std::atomic<bool> warned{false};
+            if (!warned.exchange(true)) {
+                std::fprintf(stderr,
+                             "NINFER invalid UTF-8 in prompt text replaced with U+FFFD\n");
+            }
+            return *normalized;
+        }
     }
-    std::string normalized(reinterpret_cast<const char*>(mapped), static_cast<std::size_t>(result));
-    std::free(mapped);
-    return normalized;
+    throw std::invalid_argument("failed to normalize UTF-8 text as NFC: invalid UTF-8");
 }
 
 CodepointSpan utf8_codepoint_at(std::string_view text, std::size_t offset,

@@ -168,7 +168,10 @@ Malformed protocol values return field-specific HTTP 400 errors. Invalid media s
 decoded content use `invalid_media`; remote fetch and timeout failures retain their dedicated
 server-error codes. Failures in the normalized prompt contract use `invalid_prompt`; typed capacity
 and availability failures retain their dedicated codes. Internal invariant failures are not
-relabeled as client input errors.
+relabeled as client input errors. Prompt text is normalized to NFC; a malformed UTF-8 sequence in a
+replayed message is replaced with U+FFFD and the request continues (one warning per process), so a
+long client session does not become unrecoverable after it stores a partial multibyte sequence.
+Valid text is unchanged.
 
 The request `model` must equal the public model ID: the artifact `identity.model_id` by default, or
 the explicit `--model-id` override. Reasoning is returned separately as `reasoning_content`; answer

@@ -650,6 +650,13 @@ int test_prepare_tokens_tail_query() {
     return failures;
 }
 
+int test_invalid_utf8_text_is_replaced() {
+    const std::string input    = std::string("a") + '\xff' + "b";
+    const std::string expected = std::string("a") + "\xEF\xBF\xBD" + "b";
+    return check(ninfer::text::unicode_internal::normalize_nfc(input) == expected,
+                 "invalid UTF-8 prompt text was not replaced with U+FFFD");
+}
+
 int test_official_chat_template() {
     int failures = 0;
     failures += check(render_chat_text({chat_message(ninfer::ChatRole::User, "hello")}) ==
@@ -2346,6 +2353,7 @@ int run_tests() {
     run("test_bounded_tokenizer_prefix", [&] { return test_bounded_tokenizer_prefix(); });
     run("test_context_capacity_guard", [&] { return test_context_capacity_guard(); });
     run("test_prepare_tokens_tail_query", [&] { return test_prepare_tokens_tail_query(); });
+    run("test_invalid_utf8_text_is_replaced", [&] { return test_invalid_utf8_text_is_replaced(); });
     run("test_official_chat_template", [&] { return test_official_chat_template(); });
     run("test_ordered_instruction_turns", [&] { return test_ordered_instruction_turns(); });
     run("test_assistant_continuation", [&] { return test_assistant_continuation(); });
