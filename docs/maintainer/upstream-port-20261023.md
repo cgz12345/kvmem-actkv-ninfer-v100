@@ -68,6 +68,6 @@ ActKV off): `prev=482 sel=480 changed=239 inc=1`, same five correct cases
   record (different fixture and output length).
 - Delta restore falls back to a full restore when more than half the slots change; the
   256K reference still takes the full path.
-- `release/bin` was not replaced, no production service was started, and the source changes
-  are uncommitted.
+- `release/bin` was not replaced and no production service was started. The source changes are
+  committed as `e44a779` and pushed to `mine/master`; the release binaries remain unchanged.
 - DFlash2/NVFP4 and the constrained-tool-call patch were not ported.
